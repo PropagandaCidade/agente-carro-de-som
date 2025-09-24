@@ -1,4 +1,4 @@
-# app.py (versão convertida para Flask para o teste final)
+# app.py (versão Flask com CORS padrão, igual ao projeto TTS)
 import os
 import httpx
 from flask import Flask, request, jsonify
@@ -6,10 +6,10 @@ from flask_cors import CORS
 
 app = Flask(__name__)
 
-# Configurando o CORS com Flask-CORS, assim como no seu outro projeto que funciona.
-# Lendo a origem da variável de ambiente.
-allowed_origin = os.environ.get("ALLOW_ORIGINS", "*")
-CORS(app, origins=[allowed_origin])
+# CONFIGURAÇÃO CORRETA:
+# Inicializando o CORS de forma simples, para permitir todas as origens (*).
+# Exatamente como o seu projeto TTS funcional provavelmente faz.
+CORS(app)
 
 @app.route("/")
 def root():
@@ -34,7 +34,6 @@ def search_city():
     headers = {"User-Agent": "SomAgent-Test/1.0 (+contato@exemplo.com)"}
 
     try:
-        # Usando 'requests' que é síncrono, ideal para Flask
         resp = httpx.get(nominatim_url, params=params, headers=headers, timeout=15.0)
         resp.raise_for_status()
         arr = resp.json()
@@ -59,5 +58,4 @@ def search_city():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    # Esta parte é apenas para teste local, a Railway usará o Procfile.
     app.run(host="0.0.0.0", port=port)
