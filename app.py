@@ -1,33 +1,47 @@
-# app.py (versão final e correta)
+# app.py (versão final - com tratamento manual de CORS para compatibilidade com proxy)
 import os
 from typing import Optional, List
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 import httpx
 
-# Lendo a origem da variável de ambiente (o jeito certo)
-_allow = os.environ.get("ALLOW_ORIGINS", "*")
-if _allow.strip() == "*":
-    ALLOWED_ORIGINS = ["*"]
-else:
-    # Permite múltiplas origens separadas por vírgula, ex: "url1.com,url2.com"
-    ALLOWED_ORIGINS = [o.strip() for o in _allow.split(",") if o.strip()]
+# A origem permitida (idealmente vinda de uma variável de ambiente)
+# Para garantir, vamos deixar o valor fixo por enquanto.
+ALLOWED_ORIGIN = "https://propagacidadeaudio.com.br"
 
-app = FastAPI(title="Agente Carro de Som - Protótipo")
+app = FastAPI(title="Agente Carro de Som - Protótipo (CORS Manual)")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# --- INÍCIO DA CORREÇÃO DE CORS ---
+
+# 1. Middleware para adicionar o cabeçalho CORS a TODAS as respostas normais
+@app.middleware("http")
+async def add_cors_header(request: Request, call_next):
+    # Pula a lógica para requisições de preflight (OPTIONS), que terão seu próprio handler
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
+    return response
+
+# 2. Handler explícito para TODAS as requisições OPTIONS (preflight)
+# Isso intercepta a requisição antes que o middleware do FastAPI que causa o conflito atue.
+@app.options("/api/{path:path}")
+async def handle_options_requests(path: str):
+    response = Response()
+    response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
+    response.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+# --- FIM DA CORREÇÃO DE CORS ---
+# NOTA: O app.add_middleware(CORSMiddleware, ...) FOI REMOVIDO INTENCIONALMENTE.
+
 
 class SearchReq(BaseModel):
     city: str
     state: Optional[str] = None
-    radii: Optional[List[int]] = [10000,30000,50000]
+    radii: Optional[List[int]] = [10000, 30000, 50000]
 
 @app.get("/")
 async def root():
@@ -35,7 +49,7 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status":"ok"}
+    return {"status": "ok"}
 
 @app.post("/api/search_city")
 async def search_city(payload: SearchReq):
@@ -68,7 +82,8 @@ async def search_city(payload: SearchReq):
     return {
         "status": "ok",
         "city": payload.city,
-        "geocoding": geocoding
+        "geocoding": geocoding,
+        "note": "Protótipo: rota funcionando com CORS manual."
     }
 
 if __name__ == "__main__":
