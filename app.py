@@ -77,7 +77,7 @@ def is_relevant_with_gemini(place_details: Dict, model) -> bool:
 def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
     if not phone_number: return None
     digits_only = re.sub(r'\D', '', phone_number)
-    if len(digits_only) in:
+    if len(digits_only) in [10, 11]:
         return f"https://wa.me/55{digits_only}"
     return None
 
