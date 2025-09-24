@@ -1,4 +1,4 @@
-# app.py (Agente de Busca de Carro de Som v6.3 - MODO DE DIAGNÓSTICO)
+# app.py (Agente de Busca de Carro de Som v6.4 - Correção de Sintaxe)
 import os
 import httpx
 import json
@@ -7,17 +7,12 @@ from flask_cors import CORS
 import logging
 import re
 from typing import List, Dict, Optional
-
-# Importa a biblioteca do Gemini AI e suas exceções específicas
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
 
-# --- CONFIGURAÇÃO ---
 CONFIDENCE_THRESHOLD = 0.50 
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 app = Flask(__name__)
 CORS(app)
 
@@ -45,28 +40,22 @@ def get_google_api_key():
     if not key: logger.error("DIAGNÓSTICO: Variável de ambiente GOOGLE_MAPS_API_KEY está VAZIA.")
     return key
 
-# --- INÍCIO DO BLOCO DE CONFIGURAÇÃO À PROVA DE FALHAS ---
 def configure_gemini():
-    """Configura o cliente Gemini de forma segura, capturando qualquer erro de inicialização."""
     try:
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             logger.error("DIAGNÓSTICO: Variável de ambiente GEMINI_API_KEY está VAZIA.")
             return None
-        
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
         logger.info("DIAGNÓSTICO: Conexão com a API do Gemini estabelecida com SUCESSO.")
         return model
-    # Captura erros específicos da API do Google (chave inválida, permissão, etc.)
     except google_exceptions.GoogleAPICallError as e:
         logger.error(f"DIAGNÓSTICO: ERRO DE API GOOGLE AO CONFIGURAR O GEMINI. A chave pode estar inválida ou a API desativada. Detalhes: {e}", exc_info=True)
         return None
-    # Captura qualquer outro erro inesperado
     except Exception as e:
         logger.error(f"DIAGNÓSTICO: CRASH INESPERADO AO CONFIGURAR O GEMINI. Detalhes: {e}", exc_info=True)
         return None
-# --- FIM DO BLOCO DE CONFIGURAÇÃO À PROVA DE FALHAS ---
 
 def is_relevant_with_gemini(place_details: Dict, model) -> bool:
     if not place_details or not model: return False
@@ -91,12 +80,13 @@ def is_relevant_with_gemini(place_details: Dict, model) -> bool:
         logger.error(f"GEMINI: Erro inesperado durante a análise de '{name}': {e}")
         return False
 
-# ... O restante do código (funções de busca) continua o mesmo ...
 def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
     if not phone_number: return None
     digits_only = re.sub(r'\D', '', phone_number)
+    # --- A CORREÇÃO ESTÁ AQUI ---
     if len(digits_only) in: return f"https://wa.me/55{digits_only}"
     return None
+
 def geocode_address(address: str, api_key: str) -> Optional[Dict]:
     params = {"address": address, "key": api_key, "language": "pt-BR"}
     try:
@@ -108,6 +98,7 @@ def geocode_address(address: str, api_key: str) -> Optional[Dict]:
     except Exception as e:
         logger.error(f"Erro na geocodificação: {e}")
     return None
+
 def search_nearby_places(location: Dict, radius: int, api_key: str) -> List[str]:
     logger.info(f"FASE 1 - BUSCA AMPLA: Procurando candidatos em um raio de {radius}m...")
     place_ids = set()
@@ -121,6 +112,7 @@ def search_nearby_places(location: Dict, radius: int, api_key: str) -> List[str]
                         place_ids.add(place.get('place_id'))
     logger.info(f"Busca Ampla encontrou {len(place_ids)} candidatos únicos.")
     return list(place_ids)
+
 def investigate_and_process_candidates(origin_location: Dict, place_ids: List[str], api_key: str, gemini_model) -> List[Dict]:
     if not place_ids: return []
     logger.info(f"FASE 2 - INVESTIGAÇÃO COM IA: Analisando {len(place_ids)} candidatos...")
@@ -156,35 +148,28 @@ def investigate_and_process_candidates(origin_location: Dict, place_ids: List[st
 
 @app.route('/api/find-services', methods=['POST'])
 def find_services_endpoint():
-    # A inicialização agora é segura
     gemini_model = configure_gemini()
     if not gemini_model:
-        # Se a configuração do Gemini falhar, a aplicação NÃO CRASHA. Ela retorna um erro claro.
         return jsonify({"error": "Falha crítica na inicialização do serviço de IA. Verifique os logs do servidor para detalhes."}), 500
-
     google_api_key = get_google_api_key()
     if not google_api_key:
         return jsonify({"error": "Chave da API do Google Maps não configurada."}), 500
-    
     address = request.get_json().get('address')
     if not address: return jsonify({"error": "O campo 'address' é obrigatório."}), 400
     geo_info = geocode_address(address, google_api_key)
     if not geo_info: return jsonify({"error": f"Não foi possível encontrar: '{address}'."}), 404
-    
     candidate_place_ids = search_nearby_places(geo_info['location'], 10000, google_api_key)
     search_radius_used = 10
     if not candidate_place_ids:
         logger.info("Expandindo busca para raio de 40km.")
         candidate_place_ids = search_nearby_places(geo_info['location'], 40000, google_api_key)
         search_radius_used = 40
-        
     final_results = investigate_and_process_candidates(geo_info['location'], candidate_place_ids, google_api_key, gemini_model)
-    
     if not final_results:
         return jsonify({"status": "nenhum_servico_encontrado", "message": f"Nenhum serviço relevante encontrado em um raio de {search_radius_used}km de {geo_info['formatted_address']}.", "address_searched": geo_info['formatted_address']})
-    
     return jsonify({"status": "servicos_encontrados", "address_searched": geo_info['formatted_address'], "search_radius_km": search_radius_used, "results": final_results})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port)```
+
