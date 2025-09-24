@@ -1,4 +1,4 @@
-# app.py (Agente de Busca de Carro de Som v4.0 - Refinamento e WhatsApp)
+# app.py (Agente de Busca de Carro de Som v4.1 - Correção de Crash)
 import os
 import httpx
 from flask import Flask, request, jsonify
@@ -16,10 +16,7 @@ CORS(app)
 
 GOOGLE_API_BASE_URL = "https://maps.googleapis.com/maps/api"
 
-# --- REFINAMENTO 1: MELHORANDO A PRECISÃO DA BUSCA ---
-# Palavras-chave mais focadas em serviço de publicidade
 SEARCH_KEYWORDS = ["publicidade volante", "propaganda em carro de som", "anúncios em carro de som", "carro de som para eventos"]
-# Palavras-chave negativas para filtrar resultados indesejados
 NEGATIVE_KEYWORDS = ["automotivo", "acessórios", "instalação", "som para carro", "loja de som", "películas", "alarmes"]
 
 def get_google_api_key():
@@ -29,14 +26,10 @@ def get_google_api_key():
     return key
 
 def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
-    """Limpa um número de telefone e o formata para um link do WhatsApp."""
     if not phone_number:
         return None
-    # Remove todos os caracteres que não são dígitos
     digits_only = re.sub(r'\D', '', phone_number)
-    # Verifica se é um número de celular válido no Brasil (com DDD)
-    if len(digits_only) in [11, 10]: # Ex: 62999998888 (11) ou 6233334444 (10)
-        # Assume código de país 55 para o Brasil
+    if len(digits_only) in [11, 10]:
         return f"https://wa.me/55{digits_only}"
     return None
 
@@ -73,12 +66,9 @@ def search_nearby_places(location: Dict, radius: int, keywords: List[str], api_k
                 for place in data['results']:
                     place_id = place.get('place_id')
                     place_name = place.get('name', '').lower()
-                    
-                    # --- REFINAMENTO 2: APLICANDO O FILTRO NEGATIVO ---
                     if any(neg_word in place_name for neg_word in NEGATIVE_KEYWORDS):
                         logger.info(f"FILTRADO: '{place.get('name')}' descartado por conter palavra-chave negativa.")
-                        continue # Pula para o próximo resultado
-                        
+                        continue
                     if place_id and place_id not in all_results:
                         all_results[place_id] = place
     logger.info(f"Busca concluída com {len(all_results)} resultados únicos e filtrados.")
@@ -101,17 +91,32 @@ def get_details_and_distances(origin_location: Dict, places: Dict, api_key: str)
             details_response = client.get(details_url, params=details_params).json()
             place_details = details_response.get('result', {})
             distance_info = {}
-            if distance_response.get('status') == 'OK' and i < len(distance_response['rows'][0]['elements']) and distance_response['rows'][0]['elements'][i]['status'] == 'OK':
-                element = distance_response['rows'][0]['elements'][i]
-                distance_info = {"distance_text": element['distance']['text'], "distance_meters": element['distance']['value'], "duration_text": element['duration']['text']}
             
+            # --- INÍCIO DA CORREÇÃO ---
+            # Esta verificação é mais robusta e evita o crash
+            # Ela garante que todas as chaves existem antes de tentar acessá-las
+            if (distance_response.get('status') == 'OK' and
+                distance_response.get('rows') and
+                len(distance_response['rows']) > 0 and
+                distance_response['rows'][0].get('elements') and
+                i < len(distance_response['rows'][0]['elements']) and
+                distance_response['rows'][0]['elements'][i].get('status') == 'OK'):
+                
+                element = distance_response['rows'][0]['elements'][i]
+                distance_info = {
+                    "distance_text": element['distance']['text'],
+                    "distance_meters": element['distance']['value'],
+                    "duration_text": element['duration']['text']
+                }
+            # --- FIM DA CORREÇÃO ---
+
             phone_number = place_details.get('formatted_phone_number')
             
             final_results.append({
                 "name": place_details.get('name', place_data.get('name')),
                 "address": place_details.get('formatted_address', place_data.get('vicinity')),
                 "phone": phone_number,
-                "whatsapp_url": format_phone_for_whatsapp(phone_number), # --- REFINAMENTO 3: WHATSAPP URL ---
+                "whatsapp_url": format_phone_for_whatsapp(phone_number),
                 "google_maps_url": place_details.get('url'),
                 **distance_info
             })
@@ -121,7 +126,7 @@ def get_details_and_distances(origin_location: Dict, places: Dict, api_key: str)
 
 @app.route('/')
 def home():
-    return jsonify({"status": "Agente de busca de carro de som v4.0 está online."})
+    return jsonify({"status": "Agente de busca de carro de som v4.1 está online."})
 
 @app.route('/api/find-services', methods=['POST'])
 def find_services_endpoint():
@@ -154,12 +159,4 @@ def find_services_endpoint():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    app.run(host='0.0.0.0', port=port)```
-
-### O que fazer agora?
-
-1.  **Atualize o `app.py`:** Faça o commit e push deste novo código para o seu repositório. A Railway irá implantar a nova versão.
-2.  **Teste (Opcional):** Você pode testar com o `index.html` atual. A filtragem já estará funcionando nos bastidores, e se você olhar o JSON bruto, verá o novo campo `"whatsapp_url": "https://wa.me/..."`.
-
-
-
+    app.run(host='0.0.0.0', port=port)
