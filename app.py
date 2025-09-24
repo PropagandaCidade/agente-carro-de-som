@@ -1,4 +1,4 @@
-# app.py (versão de depuração com CORS fixo)
+# app.py (versão 4 - com ProxyHeadersMiddleware)
 import os
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException
@@ -6,29 +6,33 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 
-# --- INÍCIO DA ALTERAÇÃO PARA DEBUG ---
-# Em vez de ler da variável de ambiente, estamos definindo a origem permitida diretamente.
-# Isso garante que o valor está 100% correto para o teste.
-# Se isso resolver, o problema estava na configuração da variável de ambiente na Railway.
+# Middleware para ajudar o FastAPI a entender que está atrás de um proxy (como o da Railway)
+# Importação necessária:
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+# --- TENTATIVA ANTERIOR (MANTIDA PARA GARANTIA) ---
+# Forçando a origem permitida diretamente no código para eliminar
+# qualquer dúvida sobre a variável de ambiente.
 ALLOWED_ORIGINS = ["https://propagandacidadeaudio.com.br"]
-# --- FIM DA ALTERAÇÃO PARA DEBUG ---
+# --- FIM DA TENTATIVA ANTERIOR ---
 
-# O código original para ler a variável de ambiente foi comentado abaixo.
-# _allow = os.environ.get("ALLOW_ORIGINS", "*")
-# if _allow.strip() == "*":
-#     ALLOWED_ORIGINS = ["*"]
-# else:
-#     ALLOWED_ORIGINS = [o.strip() for o in _allow.split(",") if o.strip()]
+app = FastAPI(title="Agente Carro de Som - Protótipo v4")
 
-app = FastAPI(title="Agente Carro de Som - Protótipo (CORS Fixo para Debug)")
+# --- MUDANÇA PRINCIPAL ---
+# 1. Adicionar o middleware para o proxy da Railway
+# Este middleware deve ser um dos primeiros a serem adicionados.
+# Ele corrige como o FastAPI interpreta os cabeçalhos de host, porta e esquema.
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
+# 2. Adicionar o middleware do CORS depois
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS, # Usando a lista definida acima
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# --- FIM DA MUDANÇA PRINCIPAL ---
 
 class SearchReq(BaseModel):
     city: str
@@ -75,7 +79,7 @@ async def search_city(payload: SearchReq):
         "status": "ok",
         "city": payload.city,
         "geocoding": geocoding,
-        "note": "Protótipo: rota funcionando com CORS fixo para depuração."
+        "note": "Protótipo: rota funcionando com middleware de proxy."
     }
 
 if __name__ == "__main__":
