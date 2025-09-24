@@ -95,7 +95,7 @@ def geocode_address(address: str, api_key: str) -> Optional[Dict]:
             response = client.get(f"{GOOGLE_API_BASE_URL}/geocode/json", params=params).json()
         if response['status'] == 'OK' and response.get('results'):
             # CORREÇÃO: Pegamos o primeiro resultado da lista
-            result = response['results']
+            result = response['results'][0]
             return {"location": result['geometry']['location'], "formatted_address": result.get('formatted_address', address)}
     except Exception as e:
         logger.error(f"Erro na geocodificação: {e}")
@@ -141,8 +141,8 @@ def investigate_and_process_candidates(origin_location: Dict, place_ids: List[st
         for i, place_id in enumerate(relevant_places.keys()):
             place_details = relevant_places[place_id]
             distance_info = {}
-            if (distance_response.get('status') == 'OK' and distance_response.get('rows') and distance_response['rows'].get('elements') and i < len(distance_response['rows']['elements']) and distance_response['rows']['elements'][i].get('status') == 'OK'):
-                element = distance_response['rows']['elements'][i]
+            if (distance_response.get('status') == 'OK' and distance_response.get('rows') and distance_response['rows'][0].get('elements') and i < len(distance_response['rows'][0]['elements']) and distance_response['rows'][0]['elements'][i].get('status') == 'OK'):
+                element = distance_response['rows'][0]['elements'][i]
                 distance_info = {"distance_text": element['distance']['text'], "distance_meters": element['distance']['value'], "duration_text": element['duration']['text']}
             phone = place_details.get('formatted_phone_number')
             final_results.append({"name": place_details.get('name'), "address": place_details.get('formatted_address'), "phone": phone, "whatsapp_url": format_phone_for_whatsapp(phone), "google_maps_url": place_details.get('url'), **distance_info})
