@@ -1,4 +1,4 @@
-# app.py (Agente de Busca de Carro de Som v5.0 - Agente Detetive)
+# app.py (Agente de Busca de Carro de Som v5.1 - Detetive Otimizado)
 import os
 import httpx
 import json
@@ -29,7 +29,6 @@ def load_config(filename: str) -> Dict:
 
 CONFIG = load_config('config.json')
 SEARCH_KEYWORDS = CONFIG.get('search_keywords', [])
-POSITIVE_KEYWORDS = CONFIG.get('positive_keywords_in_name', [])
 NEGATIVE_KEYWORDS = CONFIG.get('negative_keywords_in_name', [])
 NEGATIVE_TYPES = CONFIG.get('negative_business_types', [])
 
@@ -38,33 +37,28 @@ def get_google_api_key():
     if not key: logger.error("ERRO CRÍTICO: GOOGLE_MAPS_API_KEY não encontrada.")
     return key
 
-# --- INÍCIO DA LÓGICA DE VALIDAÇÃO INTELIGENTE ---
+# --- INÍCIO DA LÓGICA DE VALIDAÇÃO CORRIGIDA E OTIMIZADA ---
 def is_relevant_business(place_details: Dict) -> bool:
-    """Verifica se um negócio é relevante com base em nome e tipo."""
+    """Verifica se um negócio é relevante, removendo a validação positiva obrigatória."""
     if not place_details:
         return False
         
     name = place_details.get('name', '').lower()
     types = place_details.get('types', [])
 
-    # 1. Eliminação Imediata por Tipo de Negócio
+    # 1. Eliminação por Tipo de Negócio (ex: 'bicycle_store')
     if any(neg_type in types for neg_type in NEGATIVE_TYPES):
         logger.info(f"FILTRADO (por tipo): '{place_details.get('name')}' tem tipo indesejado: {types}")
         return False
 
-    # 2. Eliminação por Palavra-Chave Negativa no Nome
+    # 2. Eliminação por Palavra-Chave Negativa no Nome (ex: 'loja', 'mecânica')
     if any(neg_word in name for neg_word in NEGATIVE_KEYWORDS):
         logger.info(f"FILTRADO (por nome negativo): '{place_details.get('name')}' contém palavra negativa.")
         return False
         
-    # 3. Validação Positiva Obrigatória no Nome
-    if any(pos_word in name for pos_word in POSITIVE_KEYWORDS):
-        logger.info(f"APROVADO: '{place_details.get('name')}' parece relevante.")
-        return True
-
-    # Se sobreviveu aos filtros negativos mas não tem prova positiva, é descartado.
-    logger.info(f"FILTRADO (sem prova positiva): '{place_details.get('name')}' é muito genérico.")
-    return False
+    # Se sobreviveu aos filtros de eliminação, é considerado relevante.
+    logger.info(f"APROVADO: '{place_details.get('name')}' passou nos filtros de eliminação.")
+    return True
 # --- FIM DA LÓGICA DE VALIDAÇÃO ---
 
 def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
@@ -83,7 +77,6 @@ def geocode_address(address: str, api_key: str) -> Dict:
     return None
 
 def search_nearby_places(location: Dict, radius: int, api_key: str) -> List[str]:
-    """Retorna apenas uma lista de place_ids para investigação."""
     logger.info(f"FASE 1 - BUSCA AMPLA: Procurando candidatos em um raio de {radius}m...")
     place_ids = set()
     with httpx.Client() as client:
@@ -93,12 +86,11 @@ def search_nearby_places(location: Dict, radius: int, api_key: str) -> List[str]
             if response['status'] == 'OK':
                 for place in response['results']:
                     if place.get('place_id'):
-                        place_ids.add(place['place_id'])
+                        place_ids.add(place.get('place_id'))
     logger.info(f"Busca Ampla encontrou {len(place_ids)} candidatos únicos.")
     return list(place_ids)
 
 def investigate_and_process_candidates(origin_location: Dict, place_ids: List[str], api_key: str) -> List[Dict]:
-    """Investiga cada candidato, filtra os irrelevantes e calcula distâncias."""
     if not place_ids: return []
     logger.info(f"FASE 2 - INVESTIGAÇÃO: Analisando {len(place_ids)} candidatos...")
     
@@ -106,14 +98,12 @@ def investigate_and_process_candidates(origin_location: Dict, place_ids: List[st
     relevant_places = {}
 
     with httpx.Client(timeout=30.0) as client:
-        # Interrogatório: Pega a ficha completa de cada candidato
         for place_id in place_ids:
             details_params = {"place_id": place_id, "fields": "name,formatted_address,formatted_phone_number,url,types", "key": api_key, "language": "pt-BR"}
             details_response = client.get(f"{GOOGLE_API_BASE_URL}/place/details/json", params=details_params).json()
             
             if details_response.get('status') == 'OK':
                 place_details = details_response.get('result', {})
-                # Julgamento: Decide se o candidato é válido
                 if is_relevant_business(place_details):
                     relevant_places[place_id] = place_details
         
