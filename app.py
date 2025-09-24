@@ -1,4 +1,4 @@
-# app.py (Agente de Busca de Carro de Som v6.1 - Prompt Estruturado e Confiança)
+# app.py (Agente de Busca de Carro de Som v6.2 - Gemini Robusto)
 import os
 import httpx
 import json
@@ -9,8 +9,6 @@ import re
 from typing import List, Dict, Optional
 
 # --- CONFIGURAÇÃO ---
-# Nível de confiança mínimo para que um resultado seja considerado relevante.
-# Baseado na sua regra de prompt, 0.50 é um bom ponto de partida.
 CONFIDENCE_THRESHOLD = 0.50 
 
 logging.basicConfig(level=logging.INFO)
@@ -22,7 +20,6 @@ CORS(app)
 GOOGLE_API_BASE_URL = "https://maps.googleapis.com/maps/api"
 SEARCH_KEYWORDS = ["carro de som", "moto som", "bike som", "propaganda volante", "publicidade"]
 
-# --- O SEU PROMPT ESTRUTURADO ---
 PROMPT_TEMPLATE = """
 Você é um assistente de prospecção para uma empresa de publicidade que identifica se um negócio oferece serviços de propaganda volante (por exemplo: carro de som, moto som, bike som, som ambulante). 
 INSTRUÇÕES (leia e obedeça estritamente):
@@ -74,44 +71,51 @@ def configure_gemini():
         logger.error("ERRO CRÍTICO: GEMINI_API_KEY não encontrada.")
         return None
     genai.configure(api_key=api_key)
-    # Importante: Configuramos o modelo para responder em JSON
-    model = genai.GenerativeModel('gemini-1.5-flash-latest', generation_config={"response_mime_type": "application/json"})
+    # --- CORREÇÃO: Removemos a exigência de JSON na chamada para torná-la mais robusta ---
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
     return model
 
-# --- CÉREBRO DE IA ATUALIZADO ---
+# --- CÉREBRO DE IA ATUALIZADO E ROBUSTO ---
 def is_relevant_with_gemini(place_details: Dict, model) -> bool:
     if not place_details or not model: return False
-        
     name = place_details.get('name', 'N/A')
     types = place_details.get('types', [])
-    
     prompt = PROMPT_TEMPLATE.format(name=name, types=types)
     
     try:
-        logger.info(f"GEMINI: Analisando '{name}' com prompt estruturado...")
+        logger.info(f"GEMINI: Analisando '{name}'...")
         response = model.generate_content(prompt)
         
-        # O Gemini agora retorna um JSON, então precisamos decodificá-lo
-        result_json = json.loads(response.text)
+        # --- CORREÇÃO: Bloco de limpeza e parse seguro da resposta ---
+        if not response.parts:
+            logger.warning(f"GEMINI: Resposta vazia para '{name}'.")
+            return False
+
+        raw_text = response.text.strip()
+        # Remove os acentos graves do Markdown se o Gemini os incluir
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:-3].strip()
+        elif raw_text.startswith("```"):
+            raw_text = raw_text[3:-3].strip()
+
+        result_json = json.loads(raw_text)
+        # --- FIM DO BLOCO DE CORREÇÃO ---
         
         answer = result_json.get("answer")
         confidence = result_json.get("confidence", 0)
         reason = result_json.get("reason")
 
         logger.info(f"GEMINI: Veredito para '{name}': {answer.upper()} (Confiança: {confidence:.2f}). Motivo: {reason}")
-        
-        # A nova regra de decisão: a resposta deve ser "sim" E a confiança deve ser alta o suficiente
         return answer == "sim" and confidence >= CONFIDENCE_THRESHOLD
         
-    except (json.JSONDecodeError, AttributeError) as e:
-        logger.error(f"GEMINI: Erro ao decodificar a resposta para '{name}'. Resposta recebida: {response.text}. Erro: {e}")
+    except json.JSONDecodeError:
+        logger.error(f"GEMINI: ERRO DE PARSE. Não foi possível decodificar a resposta para '{name}'. Resposta recebida: {raw_text}")
         return False
     except Exception as e:
         logger.error(f"GEMINI: Erro inesperado ao analisar '{name}': {e}")
         return False
 
-# ... (O restante das funções de busca e processamento continua o mesmo) ...
-
+# ... (O restante das funções continua exatamente igual) ...
 def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
     if not phone_number: return None
     digits_only = re.sub(r'\D', '', phone_number)
