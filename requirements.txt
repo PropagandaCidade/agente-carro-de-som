@@ -1,0 +1,4 @@
+fastapi
+uvicorn[standard]
+httpx
+google-genai   # ver nota: nome da biblioteca/versão pode variar; confira quickstart. [NÃO VERIFICADO]
