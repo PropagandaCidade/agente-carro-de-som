@@ -1,4 +1,4 @@
-# app.py (Agente de Busca de Carro de Som v6.6 - CORREÇÃO FINAL DE SINTAXE)
+# app.py (Agente de Busca de Carro de Som v6.5 - Correção de Sintaxe Final)
 import os
 import httpx
 import json
@@ -83,7 +83,7 @@ def is_relevant_with_gemini(place_details: Dict, model) -> bool:
 def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
     if not phone_number: return None
     digits_only = re.sub(r'\D', '', phone_number)
-    # --- CORREÇÃO FINAL E VERIFICADA ---
+    # --- A CORREÇÃO DE SINTAXE ESTÁ AQUI ---
     if len(digits_only) in:
         return f"https://wa.me/55{digits_only}"
     return None
