@@ -1,5 +1,4 @@
-# app.py
-# Protótipo rápido: CORS configurável via ALLOW_ORIGINS (use "*" só para teste).
+# app.py (versão rápida — CORS permissivo para teste)
 import os
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException
@@ -7,7 +6,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 
-# LER VARIÁVEL: ALLOW_ORIGINS
 _allow = os.environ.get("ALLOW_ORIGINS", "*")
 if _allow.strip() == "*":
     ALLOWED_ORIGINS = ["*"]
@@ -16,7 +14,6 @@ else:
 
 app = FastAPI(title="Agente Carro de Som - Protótipo (CORS rápido)")
 
-# CORS (permissivo se ALLOW_ORIGINS="*")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
