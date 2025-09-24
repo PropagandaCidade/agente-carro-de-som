@@ -1,4 +1,4 @@
-# app.py (v6.7 - Correção Final de Geocodificação)
+# app.py (v6.8 - Correção Final do Prompt)
 import os
 import httpx
 import json
@@ -18,22 +18,50 @@ CORS(app)
 
 GOOGLE_API_BASE_URL = "https://maps.googleapis.com/maps/api"
 SEARCH_KEYWORDS = ["carro de som", "moto som", "bike som", "propaganda volante", "publicidade"]
+
+# --- INÍCIO DA CORREÇÃO ---
+# As chaves {} dentro dos exemplos de JSON foram "escapadas" (duplicadas para {{ e }})
+# para que o Python não tente formatá-las.
 PROMPT_TEMPLATE = """
 Você é um assistente de prospecção para uma empresa de publicidade que identifica se um negócio oferece serviços de propaganda volante (por exemplo: carro de som, moto som, bike som, som ambulante). 
 INSTRUÇÕES (leia e obedeça estritamente):
+
 1) Use APENAS os dados fornecidos abaixo (nome e tipos). Não consulte a web nem outras fontes fora do input.  
-2) Analise se o negócio oferece ou provavelmente oferece serviços de propaganda volante.
+2) Analise se o negócio oferece ou provavelmente oferece serviços de propaganda volante. Pense em palavras-chave e categorias típicas: 
+   ["carro de som","moto som","bike som","propaganda volante","som ambulante","locução volante","sonorização ambulante","divulgação sonora","carro de propaganda","som automotivo","publicidade sonora"].
 3) Responda SOMENTE em JSON, exatamente nesse formato (sem texto adicional, sem explicações):
-{
+{{
   "answer": "sim" | "não",
   "confidence": float_between_0_and_1,
-  "reason": "frase curta explicando a decisão (máx 30 palavras)"
-}
+  "reason": "frase curta explicando a decisão (máx 30 palavras)",
+  "keywords_found": ["lista","de","palavras","encontradas"],
+  "flags": ["[NÃO VERIFICADO]" | "[INFERÊNCIA]" | "[ESPECULAÇÃO]"]
+}}
+
+4) Regras para `confidence`:
+   - 0.80–1.00 = forte evidência (palavras-chaves diretas, ex.: "carro de som", "moto som", "propaganda volante").
+   - 0.50–0.79 = evidência moderada (tipos que sugerem serviços de som, ex.: "serviços de som", "sonorização").
+   - 0.00–0.49 = fraca/nenhuma evidência (somente termos genéricos: "entretenimento", "eventos", sem referência a som móvel).
+
+5) Se os dados forem ambíguos ou insuficientes:
+   - Use `answer: "não"` **somente** quando existir evidência clara de que NÃO é relevante.
+   - Se incerto, preferir `answer: "não"` com `flags`: ["[INFERÊNCIA]","[NÃO VERIFICADO]"] e explique isso em `reason`.
+
+6) Se a saída contiver qualquer suposição, marque-a explicitamente nas `flags` usando `[INFERÊNCIA]` ou `[ESPECULAÇÃO]` e escreva em `reason` a parte que é suposição.
+
+7) Exemplos (input → output JSON):
+   - Input: name="CarroSom Silva", types=["car audio", "serviço local"]
+     Output: {{"answer":"sim","confidence":0.95,"reason":"Nome contém 'CarroSom' e tipo 'car audio'.","keywords_found":["carro","som","car audio"],"flags":[]}}
+   - Input: name="Eventos XYZ", types=["event planner","decoração"]
+     Output: {{"answer":"não","confidence":0.2,"reason":"Tipos indicam eventos genéricos sem referência a som móvel.","keywords_found":[],"flags":["[INFERÊNCIA]","[NÃO VERIFICADO]"]}}
+
 DADOS A ANALISAR:
 - Nome do negócio: "{name}"
 - Tipos (Google): {types}
+
 RETORNE apenas o JSON conforme o esquema acima.
 """
+# --- FIM DA CORREÇÃO ---
 
 def get_google_api_key():
     key = os.environ.get("GOOGLE_MAPS_API_KEY")
@@ -47,14 +75,10 @@ def configure_gemini():
             logger.error("DIAGNÓSTICO: Variável GEMINI_API_KEY está VAZIA.")
             return None
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
-        logger.info("DIAGNÓSTICO: Conexão com a API do Gemini estabelecida com SUCESSO.")
+        model = genai.GenerativeModel('gemini-1.5-flash-latest', generation_config={"response_mime_type": "application/json"})
         return model
-    except google_exceptions.GoogleAPICallError as e:
-        logger.error(f"DIAGNÓSTICO: ERRO DE API GOOGLE AO CONFIGURAR GEMINI. Detalhes: {e}", exc_info=True)
-        return None
     except Exception as e:
-        logger.error(f"DIAGNÓSTICO: CRASH INESPERADO AO CONFIGURAR GEMINI. Detalhes: {e}", exc_info=True)
+        logger.error(f"DIAGNÓSTICO: CRASH AO CONFIGURAR GEMINI. Detalhes: {e}", exc_info=True)
         return None
 
 def is_relevant_with_gemini(place_details: Dict, model) -> bool:
@@ -65,19 +89,14 @@ def is_relevant_with_gemini(place_details: Dict, model) -> bool:
     try:
         logger.info(f"GEMINI: Analisando '{name}'...")
         response = model.generate_content(prompt)
-        raw_text = response.text.strip()
-        if raw_text.startswith("```json"): raw_text = raw_text[7:-3].strip()
-        result_json = json.loads(raw_text)
+        result_json = json.loads(response.text)
         answer = result_json.get("answer")
         confidence = result_json.get("confidence", 0)
         reason = result_json.get("reason")
         logger.info(f"GEMINI: Veredito para '{name}': {answer.upper()} (Confiança: {confidence:.2f}). Motivo: {reason}")
         return answer == "sim" and confidence >= CONFIDENCE_THRESHOLD
-    except json.JSONDecodeError:
-        logger.error(f"GEMINI: ERRO DE PARSE. Resposta recebida: {raw_text}")
-        return False
     except Exception as e:
-        logger.error(f"GEMINI: Erro inesperado durante a análise de '{name}': {e}")
+        logger.error(f"GEMINI: Erro inesperado ao analisar '{name}': {e}. Resposta recebida: {getattr(response, 'text', 'N/A')}")
         return False
 
 def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
@@ -87,20 +106,17 @@ def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
         return f"https://wa.me/55{digits_only}"
     return None
 
-# --- INÍCIO DA CORREÇÃO ---
 def geocode_address(address: str, api_key: str) -> Optional[Dict]:
     params = {"address": address, "key": api_key, "language": "pt-BR"}
     try:
         with httpx.Client() as client:
             response = client.get(f"{GOOGLE_API_BASE_URL}/geocode/json", params=params).json()
         if response['status'] == 'OK' and response.get('results'):
-            # CORREÇÃO: Pegamos o primeiro resultado da lista
             result = response['results'][0]
             return {"location": result['geometry']['location'], "formatted_address": result.get('formatted_address', address)}
     except Exception as e:
         logger.error(f"Erro na geocodificação: {e}")
     return None
-# --- FIM DA CORREÇÃO ---
 
 def search_nearby_places(location: Dict, radius: int, api_key: str) -> List[str]:
     logger.info(f"FASE 1 - BUSCA AMPLA: Procurando candidatos em raio de {radius}m...")
