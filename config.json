@@ -4,31 +4,52 @@
     "moto som",
     "bike som",
     "propaganda volante",
-    "publicidade volante",
-    "divulgação com carro de som",
-    "anúncios em carro de som"
+    "publicidade volante"
   ],
-  "negative_keywords": [
+  "positive_keywords_in_name": [
+    "propaganda",
+    "publicidade",
+    "divulgação",
+    "anúncio",
+    "volante",
+    "carro de som",
+    "moto som",
+    "bike som"
+  ],
+  "negative_keywords_in_name": [
     "automotivo",
     "acessórios",
     "instalação",
-    "som para carro",
-    "loja de som",
+    "loja",
     "películas",
     "alarmes",
     "mecânica",
     "auto elétrico",
     "oficina",
     "eventos",
-    "aluguel para festas",
-    "equipamentos de som",
+    "aluguel",
+    "equipamentos",
     "customização",
     "envelopamento",
     "peças",
-    "serviços automotivos",
-    "auto center",
+    "serviços",
+    "center",
     "borracharia",
     "restaurante",
-    "martelinho"
+    "martelinho",
+    "bikes",
+    "service",
+    "amplificadores"
+  ],
+  "negative_business_types": [
+    "car_repair",
+    "store",
+    "electronics_store",
+    "bicycle_store",
+    "restaurant",
+    "car_dealer",
+    "car_rental",
+    "car_wash",
+    "point_of_interest"
   ]
 }
