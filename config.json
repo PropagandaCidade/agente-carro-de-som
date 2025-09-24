@@ -1,16 +1,15 @@
 {
   "search_keywords": [
+    "carro de som",
+    "moto som",
+    "bike som",
+    "propaganda volante",
     "publicidade volante",
-	"propaganda volante",
-	"moto som"
-    "propaganda em carro de som",
-    "anúncios em carro de som",
-    "carro de som para eventos",
-    "divulgação com carro de som"
+    "divulgação com carro de som",
+    "anúncios em carro de som"
   ],
   "negative_keywords": [
     "automotivo",
-	"Mecânica para carros"
     "acessórios",
     "instalação",
     "som para carro",
@@ -28,6 +27,8 @@
     "peças",
     "serviços automotivos",
     "auto center",
-    "borracharia"
+    "borracharia",
+    "restaurante",
+    "martelinho"
   ]
 }
