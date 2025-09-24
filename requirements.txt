@@ -1,4 +1,4 @@
-fastapi
-uvicorn[standard]
-httpx
-google-genai   # ver nota: nome da biblioteca/versão pode variar; confira quickstart. [NÃO VERIFICADO]
+fastapi==0.95.2
+uvicorn[standard]==0.22.0
+httpx==0.25.0
+python-dotenv==1.0.0
