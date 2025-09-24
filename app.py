@@ -1,64 +1,48 @@
-# app.py (versão limpa e correta para produção)
+# app.py (versão convertida para Flask para o teste final)
 import os
-from typing import Optional, List
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import httpx
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 
-# A forma correta: ler as origens permitidas de uma variável de ambiente.
-# Certifique-se de que a variável 'ALLOW_ORIGINS' está configurada na Railway
-# com o valor 'https://propagacidadeaudio.com.br'
-_allow = os.environ.get("ALLOW_ORIGINS")
-if not _allow:
-    # Um valor padrão para evitar erros caso a variável não esteja definida
-    ALLOWED_ORIGINS = [] 
-else:
-    ALLOWED_ORIGINS = [o.strip() for o in _allow.split(",") if o.strip()]
+app = Flask(__name__)
 
-app = FastAPI(title="Agente Carro de Som - Produção")
+# Configurando o CORS com Flask-CORS, assim como no seu outro projeto que funciona.
+# Lendo a origem da variável de ambiente.
+allowed_origin = os.environ.get("ALLOW_ORIGINS", "*")
+CORS(app, origins=[allowed_origin])
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+@app.route("/")
+def root():
+    return jsonify({"message": "Agente Carro de Som — serviço ativo (Flask)."})
 
-class SearchReq(BaseModel):
-    city: str
-    state: Optional[str] = None
-    radii: Optional[List[int]] = [10000,30000,50000]
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
 
-@app.get("/")
-async def root():
-    return {"message": "Agente Carro de Som — serviço ativo."}
+@app.route("/api/search_city", methods=["POST"])
+def search_city():
+    payload = request.get_json()
+    if not payload or not payload.get('city'):
+        return jsonify({"error": "Informe 'city' no payload."}), 400
 
-@app.get("/health")
-async def health():
-    return {"status":"ok"}
-
-@app.post("/api/search_city")
-async def search_city(payload: SearchReq):
-    if not payload.city or not payload.city.strip():
-        raise HTTPException(status_code=400, detail="Informe 'city' no payload.")
+    city = payload['city']
+    state = payload.get('state')
 
     nominatim_url = "https://nominatim.openstreetmap.org/search"
-    q = payload.city + (f", {payload.state}" if payload.state else "") + ", Brasil"
+    q = city + (f", {state}" if state else "") + ", Brasil"
     params = {"q": q, "format": "json", "limit": 1}
     headers = {"User-Agent": "SomAgent-Test/1.0 (+contato@exemplo.com)"}
 
     try:
-        async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
-            resp = await client.get(nominatim_url, params=params)
-            resp.raise_for_status()
-            arr = resp.json()
+        # Usando 'requests' que é síncrono, ideal para Flask
+        resp = httpx.get(nominatim_url, params=params, headers=headers, timeout=15.0)
+        resp.raise_for_status()
+        arr = resp.json()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Erro ao consultar geocoding: {str(e)}")
+        return jsonify({"error": f"Erro ao consultar geocoding: {str(e)}"}), 502
 
     if not arr:
-        return {"status": "city_not_geocoded", "city": payload.city}
+        return jsonify({"status": "city_not_geocoded", "city": city})
 
     first = arr[0]
     geocoding = {
@@ -67,12 +51,13 @@ async def search_city(payload: SearchReq):
         "display_name": first.get("display_name")
     }
 
-    return {
+    return jsonify({
         "status": "ok",
-        "city": payload.city,
+        "city": city,
         "geocoding": geocoding
-    }
+    })
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    # Esta parte é apenas para teste local, a Railway usará o Procfile.
+    app.run(host="0.0.0.0", port=port)
