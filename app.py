@@ -1,19 +1,18 @@
-# app.py (Agente de Busca de Carro de Som v1.0)
+# app.py (Agente de Busca de Carro de Som v2.0 - Busca Avançada)
 import os
 import httpx
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import logging
+from typing import List, Dict
 
-# Configuração básica de logging para vermos o que o agente está fazendo no console da Railway
+# Configuração básica de logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-# Mantemos o CORS aberto, que já sabemos que funciona bem na Railway
 CORS(app)
 
-# URL base para as APIs da Plataforma Google Maps
 GOOGLE_API_BASE_URL = "https://maps.googleapis.com/maps/api"
 
 def get_google_api_key():
@@ -23,7 +22,7 @@ def get_google_api_key():
         logger.error("ERRO CRÍTICO: Variável de ambiente GOOGLE_MAPS_API_KEY não encontrada.")
     return key
 
-def geocode_city(city_name: str, api_key: str) -> dict:
+def geocode_city(city_name: str, api_key: str) -> Dict:
     """Converte um nome de cidade em coordenadas (latitude e longitude)."""
     logger.info(f"Geocodificando a cidade: {city_name}...")
     url = f"{GOOGLE_API_BASE_URL}/geocode/json"
@@ -31,44 +30,113 @@ def geocode_city(city_name: str, api_key: str) -> dict:
     
     with httpx.Client() as client:
         response = client.get(url, params=params)
-        response.raise_for_status() # Lança um erro se a requisição falhar
+        response.raise_for_status()
         data = response.json()
 
     if data['status'] == 'OK' and data.get('results'):
-        location = data['results'][0]['geometry']['location']
-        logger.info(f"Sucesso na geocodificação: {location}")
-        return location # Retorna {'lat': -23.55, 'lng': -46.63}
+        result = data['results'][0]
+        location = result['geometry']['location']
+        formatted_address = result.get('formatted_address', city_name)
+        logger.info(f"Sucesso na geocodificação: {formatted_address} -> {location}")
+        return {"location": location, "formatted_address": formatted_address}
     
     logger.warning(f"Geocodificação falhou para '{city_name}'. Status: {data['status']}")
     return None
 
-def search_nearby_places(location: dict, radius: int, keyword: str, api_key: str) -> list:
-    """Busca por estabelecimentos próximos a uma coordenada."""
-    logger.info(f"Buscando por '{keyword}' em um raio de {radius}m...")
-    url = f"{GOOGLE_API_BASE_URL}/place/nearbysearch/json"
-    params = {
-        "location": f"{location['lat']},{location['lng']}",
-        "radius": radius,
-        "keyword": keyword,
-        "key": api_key,
-        "language": "pt-BR"
-    }
+def search_nearby_places(location: Dict, radius: int, keywords: List[str], api_key: str) -> Dict:
+    """Busca por estabelecimentos próximos usando uma lista de palavras-chave."""
+    logger.info(f"Iniciando busca em um raio de {radius}m...")
+    all_results = {}
     
     with httpx.Client() as client:
-        response = client.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
+        for keyword in keywords:
+            logger.info(f"Buscando por '{keyword}'...")
+            url = f"{GOOGLE_API_BASE_URL}/place/nearbysearch/json"
+            params = {
+                "location": f"{location['lat']},{location['lng']}",
+                "radius": radius,
+                "keyword": keyword,
+                "key": api_key,
+                "language": "pt-BR"
+            }
+            response = client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
 
-    if data['status'] == 'OK':
-        logger.info(f"Encontrados {len(data['results'])} resultados para '{keyword}'.")
-        return data['results']
+            if data['status'] == 'OK':
+                logger.info(f"Encontrados {len(data['results'])} resultados para '{keyword}'.")
+                for place in data['results']:
+                    place_id = place.get('place_id')
+                    if place_id and place_id not in all_results:
+                        all_results[place_id] = place
+    return all_results
+
+def get_details_and_distances(origin_location: Dict, places: Dict, api_key: str) -> List[Dict]:
+    """Busca detalhes (como telefone) e calcula a distância por estrada para cada local."""
+    if not places:
+        return []
+
+    logger.info(f"Calculando distâncias e buscando detalhes para {len(places)} locais...")
+    
+    destination_place_ids = [f"place_id:{place_id}" for place_id in places.keys()]
+    
+    # 1. Calcular distâncias
+    distance_url = f"{GOOGLE_API_BASE_URL}/distancematrix/json"
+    distance_params = {
+        "origins": f"{origin_location['lat']},{origin_location['lng']}",
+        "destinations": "|".join(destination_place_ids),
+        "key": api_key,
+        "language": "pt-BR",
+        "units": "metric"
+    }
+    
+    final_results = []
+    
+    with httpx.Client(timeout=30.0) as client:
+        distance_response = client.get(distance_url, params=distance_params).json()
         
-    logger.warning(f"Busca por '{keyword}' falhou. Status: {data['status']}")
-    return []
+        # 2. Buscar detalhes de cada local (telefone)
+        for i, place_id in enumerate(places.keys()):
+            place_data = places[place_id]
+            
+            details_url = f"{GOOGLE_API_BASE_URL}/place/details/json"
+            details_params = {
+                "place_id": place_id,
+                "fields": "name,formatted_address,formatted_phone_number,website,url",
+                "key": api_key,
+                "language": "pt-BR"
+            }
+            details_response = client.get(details_url, params=details_params).json()
+            
+            # 3. Combinar todas as informações
+            place_details = details_response.get('result', {})
+            distance_info = {}
+            
+            if distance_response.get('status') == 'OK' and distance_response['rows'][0]['elements'][i]['status'] == 'OK':
+                element = distance_response['rows'][0]['elements'][i]
+                distance_info = {
+                    "distance_text": element['distance']['text'],
+                    "distance_meters": element['distance']['value'],
+                    "duration_text": element['duration']['text']
+                }
+
+            final_results.append({
+                "name": place_details.get('name', place_data.get('name')),
+                "address": place_details.get('formatted_address', place_data.get('vicinity')),
+                "phone": place_details.get('formatted_phone_number'),
+                "google_maps_url": place_details.get('url'),
+                **distance_info  # Adiciona distância e duração
+            })
+
+    # 4. Ordenar por distância (metros)
+    final_results.sort(key=lambda x: x.get('distance_meters', float('inf')))
+    logger.info("Processamento de detalhes e distâncias concluído.")
+    
+    return final_results
 
 @app.route('/')
 def home():
-    return jsonify({"status": "Agente de busca de carro de som está online."})
+    return jsonify({"status": "Agente de busca de carro de som v2.0 está online."})
 
 @app.route('/api/find-services', methods=['POST'])
 def find_services_endpoint():
@@ -77,53 +145,49 @@ def find_services_endpoint():
         return jsonify({"error": "O servidor não está configurado corretamente."}), 500
 
     payload = request.get_json()
-    if not payload or not payload.get('city'):
+    city_name = payload.get('city') if payload else None
+    if not city_name:
         return jsonify({"error": "O campo 'city' é obrigatório."}), 400
 
-    city_name = payload['city']
-    
-    # 1. Obter coordenadas da cidade
-    location = geocode_city(city_name, api_key)
-    if not location:
+    # 1. Geocodificar a cidade
+    geo_info = geocode_city(city_name, api_key)
+    if not geo_info:
         return jsonify({"error": f"Não foi possível encontrar a cidade '{city_name}'."}), 404
+    
+    center_location = geo_info['location']
+    formatted_address = geo_info['formatted_address']
 
     # 2. Realizar buscas
-    search_keywords = ["carro de som", "propaganda volante", "moto som", "bicicleta de som"]
-    all_results = {} # Usamos um dicionário para evitar resultados duplicados
-
-    # TODO: Implementar a lógica de busca com raios diferentes e cálculo de distância.
-    # Por enquanto, vamos fazer uma busca simples com um raio fixo.
-    radius = 20000 # Raio de 20km
-
-    for keyword in search_keywords:
-        results = search_nearby_places(location, radius, keyword, api_key)
-        for place in results:
-            place_id = place['place_id']
-            if place_id not in all_results:
-                # Armazenamos apenas a informação que nos interessa
-                all_results[place_id] = {
-                    "name": place.get('name'),
-                    "address": place.get('vicinity'),
-                    "location": place.get('geometry', {}).get('location')
-                }
+    search_keywords = ["carro de som", "propaganda volante", "moto som", "anúncio em carro", "bike som"]
     
-    if not all_results:
+    # Busca 1: Raio Curto (10km)
+    logger.info("FASE 1: Busca em raio curto (10km).")
+    found_places = search_nearby_places(center_location, 10000, search_keywords, api_key)
+    search_radius_used = 10
+
+    # Busca 2: Raio Longo (40km), se nada for encontrado
+    if not found_places:
+        logger.info("FASE 2: Nenhum resultado no raio curto. Expandindo para raio longo (40km).")
+        found_places = search_nearby_places(center_location, 40000, search_keywords, api_key)
+        search_radius_used = 40
+
+    # 3. Obter detalhes e calcular distâncias
+    final_results = get_details_and_distances(center_location, found_places, api_key)
+    
+    if not final_results:
         return jsonify({
             "status": "nenhum_servico_encontrado",
-            "message": f"Nenhum serviço encontrado em um raio de {radius/1000}km de {city_name}."
+            "message": f"Nenhum serviço encontrado em um raio de {search_radius_used}km de {formatted_address}.",
+            "city_searched": formatted_address
         })
-
-    # Formata a saída para uma lista
-    formatted_results = list(all_results.values())
 
     return jsonify({
         "status": "servicos_encontrados",
-        "city_searched": city_name,
-        "center_coordinates": location,
-        "results": formatted_results
+        "city_searched": formatted_address,
+        "search_radius_km": search_radius_used,
+        "results": final_results
     })
 
 if __name__ == "__main__":
-    # A Railway usará o Procfile, esta parte é para teste local.
     port = int(os.environ.get("PORT", 8000))
     app.run(host='0.0.0.0', port=port)
