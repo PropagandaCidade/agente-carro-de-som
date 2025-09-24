@@ -1,4 +1,4 @@
-# app.py (v7.0 - Configuração Centralizada via JSON)
+# app.py (v7.1 - Correção Final de Sintaxe)
 import os
 import httpx
 import json
@@ -19,7 +19,6 @@ CORS(app)
 GOOGLE_API_BASE_URL = "https://maps.googleapis.com/maps/api"
 
 def load_config(filename: str) -> Dict:
-    """Carrega toda a configuração de um único arquivo JSON."""
     default_config = {
         "confidence_threshold": 0.5,
         "search_keywords": ["carro de som", "publicidade"],
@@ -34,7 +33,6 @@ def load_config(filename: str) -> Dict:
         logger.error(f"ERRO CRÍTICO: Não foi possível carregar ou ler o arquivo '{filename}': {e}. Usando configuração padrão.")
         return default_config
 
-# --- MUDANÇA PRINCIPAL: Carrega todas as configurações do JSON ---
 CONFIG = load_config('config.json')
 CONFIDENCE_THRESHOLD = CONFIG.get('confidence_threshold', 0.5)
 SEARCH_KEYWORDS = CONFIG.get('search_keywords', [])
@@ -79,7 +77,7 @@ def is_relevant_with_gemini(place_details: Dict, model) -> bool:
 def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
     if not phone_number: return None
     digits_only = re.sub(r'\D', '', phone_number)
-    if len(digits_only) in [10, 11]:
+    if len(digits_only) in:
         return f"https://wa.me/55{digits_only}"
     return None
 
@@ -89,7 +87,7 @@ def geocode_address(address: str, api_key: str) -> Optional[Dict]:
         with httpx.Client() as client:
             response = client.get(f"{GOOGLE_API_BASE_URL}/geocode/json", params=params).json()
         if response['status'] == 'OK' and response.get('results'):
-            result = response['results'][0]
+            result = response['results']
             return {"location": result['geometry']['location'], "formatted_address": result.get('formatted_address', address)}
     except Exception as e:
         logger.error(f"Erro na geocodificação: {e}")
@@ -134,8 +132,8 @@ def investigate_and_process_candidates(origin_location: Dict, place_ids: List[st
         for i, place_id in enumerate(relevant_places.keys()):
             place_details = relevant_places[place_id]
             distance_info = {}
-            if (distance_response.get('status') == 'OK' and distance_response.get('rows') and distance_response['rows'][0].get('elements') and i < len(distance_response['rows'][0]['elements']) and distance_response['rows'][0]['elements'][i].get('status') == 'OK'):
-                element = distance_response['rows'][0]['elements'][i]
+            if (distance_response.get('status') == 'OK' and distance_response.get('rows') and distance_response['rows'].get('elements') and i < len(distance_response['rows']['elements']) and distance_response['rows']['elements'][i].get('status') == 'OK'):
+                element = distance_response['rows']['elements'][i]
                 distance_info = {"distance_text": element['distance']['text'], "distance_meters": element['distance']['value'], "duration_text": element['duration']['text']}
             phone = place_details.get('formatted_phone_number')
             final_results.append({"name": place_details.get('name'), "address": place_details.get('formatted_address'), "phone": phone, "whatsapp_url": format_phone_for_whatsapp(phone), "google_maps_url": place_details.get('url'), **distance_info})
@@ -165,7 +163,4 @@ def find_services_endpoint():
         return jsonify({"status": "nenhum_servico_encontrado", "message": f"Nenhum serviço relevante encontrado em um raio de {search_radius_used}km de {geo_info['formatted_address']}.", "address_searched": geo_info['formatted_address']})
     return jsonify({"status": "servicos_encontrados", "address_searched": geo_info['formatted_address'], "search_radius_km": search_radius_used, "results": final_results})
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    app.run(host='0.0.0.0', port=port)```
-
+# --- CORREÇÃO FINAL: Removido o bloco if __name__ == "__main__": que causava o erro ---
