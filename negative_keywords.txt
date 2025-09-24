@@ -1,0 +1,21 @@
+# Lista de palavras para filtrar resultados de busca.
+# Uma palavra ou frase por linha.
+# O agente irá ignorar qualquer negócio cujo nome contenha estes termos.
+
+automotivo
+acessórios
+instalação
+som para carro
+loja de som
+películas
+alarmes
+mecânica
+auto elétrico
+oficina
+eventos
+aluguel para festas
+equipamentos de som
+customização
+envelopamento
+peças
+serviços automotivos

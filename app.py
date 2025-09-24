@@ -1,4 +1,4 @@
-# app.py (Agente de Busca de Carro de Som v4.1 - Correção de Crash)
+# app.py (Agente de Busca de Carro de Som v4.2 - Keywords Externas)
 import os
 import httpx
 from flask import Flask, request, jsonify
@@ -15,9 +15,22 @@ app = Flask(__name__)
 CORS(app)
 
 GOOGLE_API_BASE_URL = "https://maps.googleapis.com/maps/api"
-
 SEARCH_KEYWORDS = ["publicidade volante", "propaganda em carro de som", "anúncios em carro de som", "carro de som para eventos"]
-NEGATIVE_KEYWORDS = ["automotivo", "acessórios", "instalação", "som para carro", "loja de som", "películas", "alarmes"]
+
+def load_negative_keywords(filename: str) -> List[str]:
+    """Carrega palavras-chave negativas de um arquivo de texto."""
+    try:
+        with open(filename, 'r', encoding='utf-8') as f:
+            # Lê cada linha, remove espaços em branco, converte para minúsculas e ignora linhas vazias ou comentários
+            keywords = [line.strip().lower() for line in f if line.strip() and not line.startswith('#')]
+            logger.info(f"Carregadas {len(keywords)} palavras-chave negativas do arquivo '{filename}'.")
+            return keywords
+    except FileNotFoundError:
+        logger.error(f"ARQUIVO DE CONFIGURAÇÃO NÃO ENCONTRADO: '{filename}'. Usando uma lista vazia.")
+        return []
+
+# --- MUDANÇA PRINCIPAL: Carrega as palavras do arquivo quando o servidor inicia ---
+NEGATIVE_KEYWORDS = load_negative_keywords('negative_keywords.txt')
 
 def get_google_api_key():
     key = os.environ.get("GOOGLE_MAPS_API_KEY")
@@ -62,12 +75,11 @@ def search_nearby_places(location: Dict, radius: int, keywords: List[str], api_k
             response.raise_for_status()
             data = response.json()
             if data['status'] == 'OK':
-                logger.info(f"Encontrados {len(data['results'])} resultados para '{keyword}'.")
                 for place in data['results']:
                     place_id = place.get('place_id')
                     place_name = place.get('name', '').lower()
                     if any(neg_word in place_name for neg_word in NEGATIVE_KEYWORDS):
-                        logger.info(f"FILTRADO: '{place.get('name')}' descartado por conter palavra-chave negativa.")
+                        logger.info(f"FILTRADO: '{place.get('name')}' descartado.")
                         continue
                     if place_id and place_id not in all_results:
                         all_results[place_id] = place
@@ -75,8 +87,7 @@ def search_nearby_places(location: Dict, radius: int, keywords: List[str], api_k
     return all_results
 
 def get_details_and_distances(origin_location: Dict, places: Dict, api_key: str) -> List[Dict]:
-    if not places:
-        return []
+    if not places: return []
     logger.info(f"Processando detalhes para {len(places)} locais...")
     destination_place_ids = [f"place_id:{place_id}" for place_id in places.keys()]
     distance_url = f"{GOOGLE_API_BASE_URL}/distancematrix/json"
@@ -91,68 +102,36 @@ def get_details_and_distances(origin_location: Dict, places: Dict, api_key: str)
             details_response = client.get(details_url, params=details_params).json()
             place_details = details_response.get('result', {})
             distance_info = {}
-            
-            # --- INÍCIO DA CORREÇÃO ---
-            # Esta verificação é mais robusta e evita o crash
-            # Ela garante que todas as chaves existem antes de tentar acessá-las
-            if (distance_response.get('status') == 'OK' and
-                distance_response.get('rows') and
-                len(distance_response['rows']) > 0 and
-                distance_response['rows'][0].get('elements') and
-                i < len(distance_response['rows'][0]['elements']) and
-                distance_response['rows'][0]['elements'][i].get('status') == 'OK'):
-                
+            if (distance_response.get('status') == 'OK' and distance_response.get('rows') and len(distance_response['rows']) > 0 and distance_response['rows'][0].get('elements') and i < len(distance_response['rows'][0]['elements']) and distance_response['rows'][0]['elements'][i].get('status') == 'OK'):
                 element = distance_response['rows'][0]['elements'][i]
-                distance_info = {
-                    "distance_text": element['distance']['text'],
-                    "distance_meters": element['distance']['value'],
-                    "duration_text": element['duration']['text']
-                }
-            # --- FIM DA CORREÇÃO ---
-
+                distance_info = {"distance_text": element['distance']['text'], "distance_meters": element['distance']['value'], "duration_text": element['duration']['text']}
             phone_number = place_details.get('formatted_phone_number')
-            
-            final_results.append({
-                "name": place_details.get('name', place_data.get('name')),
-                "address": place_details.get('formatted_address', place_data.get('vicinity')),
-                "phone": phone_number,
-                "whatsapp_url": format_phone_for_whatsapp(phone_number),
-                "google_maps_url": place_details.get('url'),
-                **distance_info
-            })
+            final_results.append({"name": place_details.get('name', place_data.get('name')), "address": place_details.get('formatted_address', place_data.get('vicinity')), "phone": phone_number, "whatsapp_url": format_phone_for_whatsapp(phone_number), "google_maps_url": place_details.get('url'), **distance_info})
     final_results.sort(key=lambda x: x.get('distance_meters', float('inf')))
-    logger.info("Processamento de detalhes e distâncias concluído.")
     return final_results
 
 @app.route('/')
 def home():
-    return jsonify({"status": "Agente de busca de carro de som v4.1 está online."})
+    return jsonify({"status": "Agente de busca de carro de som v4.2 está online."})
 
 @app.route('/api/find-services', methods=['POST'])
 def find_services_endpoint():
     api_key = get_google_api_key()
-    if not api_key:
-        return jsonify({"error": "O servidor não está configurado corretamente."}), 500
+    if not api_key: return jsonify({"error": "O servidor não está configurado corretamente."}), 500
     payload = request.get_json()
     address = payload.get('address') if payload else None
-    if not address:
-        return jsonify({"error": "O campo 'address' é obrigatório."}), 400
+    if not address: return jsonify({"error": "O campo 'address' é obrigatório."}), 400
     geo_info = geocode_address(address, api_key)
-    if not geo_info:
-        return jsonify({"error": f"Não foi possível encontrar o local: '{address}'."}), 404
+    if not geo_info: return jsonify({"error": f"Não foi possível encontrar o local: '{address}'."}), 404
     center_location = geo_info['location']
     formatted_address = geo_info['formatted_address']
-    
-    logger.info("FASE 1: Busca em raio curto (10km).")
     found_places = search_nearby_places(center_location, 10000, SEARCH_KEYWORDS, api_key)
     search_radius_used = 10
     if not found_places:
-        logger.info("FASE 2: Nenhum resultado no raio curto. Expandindo para raio longo (40km).")
+        logger.info("Nenhum resultado no raio curto. Expandindo para raio longo (40km).")
         found_places = search_nearby_places(center_location, 40000, SEARCH_KEYWORDS, api_key)
         search_radius_used = 40
-        
     final_results = get_details_and_distances(center_location, found_places, api_key)
-    
     if not final_results:
         return jsonify({"status": "nenhum_servico_encontrado", "message": f"Nenhum serviço de propaganda volante encontrado em um raio de {search_radius_used}km de {formatted_address}.", "address_searched": formatted_address})
     return jsonify({"status": "servicos_encontrados", "address_searched": formatted_address, "search_radius_km": search_radius_used, "results": final_results})
