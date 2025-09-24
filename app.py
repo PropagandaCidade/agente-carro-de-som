@@ -1,6 +1,6 @@
 # app.py
-# FastAPI com CORS configurável via variável de ambiente ALLOW_ORIGINS.
-# Para testes rápidos, defina ALLOW_ORIGINS="*" no Railway (temporário).
+# Protótipo rápido para teste: CORS liberado por variável ALLOW_ORIGINS.
+# AVISO: ALLOW_ORIGINS="*" = permissivo (uso temporário para teste).
 import os
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException
@@ -8,16 +8,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 
-# Ler ALLOW_ORIGINS da env; pode ser "*" ou uma lista separada por vírgula
-_allow = os.environ.get("ALLOW_ORIGINS", "https://propagandacidadeaudio.com.br")
+# Lê ALLOW_ORIGINS da variável de ambiente (ex.: "*" para teste rápido)
+_allow = os.environ.get("ALLOW_ORIGINS", "*")
 if _allow.strip() == "*":
     ALLOWED_ORIGINS = ["*"]
 else:
-    # suportar múltiplos domínios separados por vírgula
     ALLOWED_ORIGINS = [o.strip() for o in _allow.split(",") if o.strip()]
 
-app = FastAPI(title="Agente Carro de Som - Protótipo (CORS configurável)")
+app = FastAPI(title="Agente Carro de Som - Protótipo (CORS rápido)")
 
+# CORS - configuração
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -71,7 +71,7 @@ async def search_city(payload: SearchReq):
         "status": "ok",
         "city": payload.city,
         "geocoding": geocoding,
-        "note": "Protótipo: rota funcionando com CORS configurável."
+        "note": "Protótipo: rota funcionando com CORS temporariamente permissivo."
     }
 
 if __name__ == "__main__":
