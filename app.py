@@ -1,4 +1,4 @@
-# app.py (Agente de Busca de Carro de Som v5.1 - Detetive Otimizado)
+# app.py (Agente de Busca de Carro de Som v6.0 - Cérebro com Gemini AI)
 import os
 import httpx
 import json
@@ -8,6 +8,9 @@ import logging
 import re
 from typing import List, Dict, Optional
 
+# Importa a biblioteca do Gemini AI
+import google.generativeai as genai
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -15,51 +18,58 @@ app = Flask(__name__)
 CORS(app)
 
 GOOGLE_API_BASE_URL = "https://maps.googleapis.com/maps/api"
-
-def load_config(filename: str) -> Dict:
-    default_config = {"search_keywords": [], "positive_keywords_in_name": [], "negative_keywords_in_name": [], "negative_business_types": []}
-    try:
-        with open(filename, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-            logger.info(f"Arquivo de configuração '{filename}' carregado com sucesso.")
-            return config
-    except Exception as e:
-        logger.error(f"Não foi possível carregar '{filename}': {e}. Usando configuração padrão.")
-        return default_config
-
-CONFIG = load_config('config.json')
-SEARCH_KEYWORDS = CONFIG.get('search_keywords', [])
-NEGATIVE_KEYWORDS = CONFIG.get('negative_keywords_in_name', [])
-NEGATIVE_TYPES = CONFIG.get('negative_business_types', [])
+SEARCH_KEYWORDS = ["carro de som", "moto som", "bike som", "propaganda volante", "publicidade"]
 
 def get_google_api_key():
     key = os.environ.get("GOOGLE_MAPS_API_KEY")
     if not key: logger.error("ERRO CRÍTICO: GOOGLE_MAPS_API_KEY não encontrada.")
     return key
 
-# --- INÍCIO DA LÓGICA DE VALIDAÇÃO CORRIGIDA E OTIMIZADA ---
-def is_relevant_business(place_details: Dict) -> bool:
-    """Verifica se um negócio é relevante, removendo a validação positiva obrigatória."""
-    if not place_details:
+def configure_gemini():
+    """Configura e retorna o cliente da API do Gemini."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        logger.error("ERRO CRÍTICO: GEMINI_API_KEY não encontrada.")
+        return None
+    genai.configure(api_key=api_key)
+    # Usaremos um modelo rápido e eficiente para a tarefa de classificação
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    return model
+
+# --- INÍCIO DO CÉREBRO DE IA (GEMINI) ---
+def is_relevant_with_gemini(place_details: Dict, model) -> bool:
+    """Usa o Gemini para decidir se um negócio é relevante."""
+    if not place_details or not model:
         return False
         
-    name = place_details.get('name', '').lower()
+    name = place_details.get('name', 'N/A')
     types = place_details.get('types', [])
+    
+    # Criamos um prompt claro e direto para o Gemini
+    prompt = f"""
+    Você é um assistente de prospecção para uma empresa de publicidade. Sua tarefa é analisar os dados de um negócio e determinar se ele OFERECE SERVIÇOS de propaganda volante (carro de som, moto som, bike som, etc.).
+    
+    Analise os dados abaixo:
+    - Nome do Negócio: "{name}"
+    - Tipos de Negócio segundo o Google: {types}
 
-    # 1. Eliminação por Tipo de Negócio (ex: 'bicycle_store')
-    if any(neg_type in types for neg_type in NEGATIVE_TYPES):
-        logger.info(f"FILTRADO (por tipo): '{place_details.get('name')}' tem tipo indesejado: {types}")
-        return False
-
-    # 2. Eliminação por Palavra-Chave Negativa no Nome (ex: 'loja', 'mecânica')
-    if any(neg_word in name for neg_word in NEGATIVE_KEYWORDS):
-        logger.info(f"FILTRADO (por nome negativo): '{place_details.get('name')}' contém palavra negativa.")
-        return False
+    Com base APENAS nesses dados, este negócio é relevante para quem busca contratar propaganda volante? Responda SOMENTE com "sim" ou "não".
+    """
+    
+    try:
+        logger.info(f"GEMINI: Analisando '{name}'...")
+        response = model.generate_content(prompt)
+        decision = response.text.strip().lower()
         
-    # Se sobreviveu aos filtros de eliminação, é considerado relevante.
-    logger.info(f"APROVADO: '{place_details.get('name')}' passou nos filtros de eliminação.")
-    return True
-# --- FIM DA LÓGICA DE VALIDAÇÃO ---
+        logger.info(f"GEMINI: Veredito para '{name}': {decision}")
+        
+        return decision == "sim"
+        
+    except Exception as e:
+        logger.error(f"GEMINI: Erro ao analisar '{name}': {e}")
+        # Se o Gemini falhar, por segurança, descartamos o candidato
+        return False
+# --- FIM DO CÉREBRO DE IA ---
 
 def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
     if not phone_number: return None
@@ -67,13 +77,16 @@ def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
     if len(digits_only) in [11, 10]: return f"https://wa.me/55{digits_only}"
     return None
 
-def geocode_address(address: str, api_key: str) -> Dict:
+def geocode_address(address: str, api_key: str) -> Optional[Dict]:
     params = {"address": address, "key": api_key, "language": "pt-BR"}
-    with httpx.Client() as client:
-        response = client.get(f"{GOOGLE_API_BASE_URL}/geocode/json", params=params).json()
-    if response['status'] == 'OK' and response.get('results'):
-        result = response['results'][0]
-        return {"location": result['geometry']['location'], "formatted_address": result.get('formatted_address', address)}
+    try:
+        with httpx.Client() as client:
+            response = client.get(f"{GOOGLE_API_BASE_URL}/geocode/json", params=params).json()
+        if response['status'] == 'OK' and response.get('results'):
+            result = response['results'][0]
+            return {"location": result['geometry']['location'], "formatted_address": result.get('formatted_address', address)}
+    except Exception as e:
+        logger.error(f"Erro na geocodificação: {e}")
     return None
 
 def search_nearby_places(location: Dict, radius: int, api_key: str) -> List[str]:
@@ -83,32 +96,37 @@ def search_nearby_places(location: Dict, radius: int, api_key: str) -> List[str]
         for keyword in SEARCH_KEYWORDS:
             params = {"location": f"{location['lat']},{location['lng']}", "radius": radius, "keyword": keyword, "key": api_key, "language": "pt-BR"}
             response = client.get(f"{GOOGLE_API_BASE_URL}/place/nearbysearch/json", params=params).json()
-            if response['status'] == 'OK':
-                for place in response['results']:
+            if response.get('status') == 'OK':
+                for place in response.get('results', []):
                     if place.get('place_id'):
                         place_ids.add(place.get('place_id'))
     logger.info(f"Busca Ampla encontrou {len(place_ids)} candidatos únicos.")
     return list(place_ids)
 
-def investigate_and_process_candidates(origin_location: Dict, place_ids: List[str], api_key: str) -> List[Dict]:
+def investigate_and_process_candidates(origin_location: Dict, place_ids: List[str], api_key: str, gemini_model) -> List[Dict]:
     if not place_ids: return []
-    logger.info(f"FASE 2 - INVESTIGAÇÃO: Analisando {len(place_ids)} candidatos...")
+    logger.info(f"FASE 2 - INVESTIGAÇÃO COM IA: Analisando {len(place_ids)} candidatos...")
     
     final_results = []
     relevant_places = {}
 
     with httpx.Client(timeout=30.0) as client:
+        # Julgamento com Gemini
         for place_id in place_ids:
-            details_params = {"place_id": place_id, "fields": "name,formatted_address,formatted_phone_number,url,types", "key": api_key, "language": "pt-BR"}
+            details_params = {"place_id": place_id, "fields": "name,url,types", "key": api_key, "language": "pt-BR"}
             details_response = client.get(f"{GOOGLE_API_BASE_URL}/place/details/json", params=details_params).json()
             
             if details_response.get('status') == 'OK':
                 place_details = details_response.get('result', {})
-                if is_relevant_business(place_details):
-                    relevant_places[place_id] = place_details
+                if is_relevant_with_gemini(place_details, gemini_model):
+                    # Se for relevante, buscamos os detalhes completos para contato
+                    full_details_params = {"place_id": place_id, "fields": "name,formatted_address,formatted_phone_number,url", "key": api_key, "language": "pt-BR"}
+                    full_details_response = client.get(f"{GOOGLE_API_BASE_URL}/place/details/json", params=full_details_params).json()
+                    if full_details_response.get('status') == 'OK':
+                        relevant_places[place_id] = full_details_response.get('result', {})
         
         if not relevant_places:
-            logger.info("Nenhum candidato passou na fase de investigação.")
+            logger.info("Nenhum candidato passou na fase de investigação com IA.")
             return []
 
         logger.info(f"FASE 3 - PROCESSAMENTO: {len(relevant_places)} candidatos aprovados. Calculando distâncias...")
@@ -131,21 +149,24 @@ def investigate_and_process_candidates(origin_location: Dict, place_ids: List[st
 
 @app.route('/api/find-services', methods=['POST'])
 def find_services_endpoint():
-    api_key = get_google_api_key()
-    if not api_key: return jsonify({"error": "Servidor não configurado."}), 500
+    google_api_key = get_google_api_key()
+    gemini_model = configure_gemini()
+    if not google_api_key or not gemini_model:
+        return jsonify({"error": "Servidor não configurado corretamente. Verifique as chaves de API."}), 500
+    
     address = request.get_json().get('address')
     if not address: return jsonify({"error": "O campo 'address' é obrigatório."}), 400
-    geo_info = geocode_address(address, api_key)
+    geo_info = geocode_address(address, google_api_key)
     if not geo_info: return jsonify({"error": f"Não foi possível encontrar: '{address}'."}), 404
     
-    candidate_place_ids = search_nearby_places(geo_info['location'], 10000, api_key)
+    candidate_place_ids = search_nearby_places(geo_info['location'], 10000, google_api_key)
     search_radius_used = 10
     if not candidate_place_ids:
         logger.info("Expandindo busca para raio de 40km.")
-        candidate_place_ids = search_nearby_places(geo_info['location'], 40000, api_key)
+        candidate_place_ids = search_nearby_places(geo_info['location'], 40000, google_api_key)
         search_radius_used = 40
         
-    final_results = investigate_and_process_candidates(geo_info['location'], candidate_place_ids, api_key)
+    final_results = investigate_and_process_candidates(geo_info['location'], candidate_place_ids, google_api_key, gemini_model)
     
     if not final_results:
         return jsonify({"status": "nenhum_servico_encontrado", "message": f"Nenhum serviço relevante encontrado em um raio de {search_radius_used}km de {geo_info['formatted_address']}.", "address_searched": geo_info['formatted_address']})
