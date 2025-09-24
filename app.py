@@ -1,4 +1,4 @@
-# app.py (versão rápida — CORS permissivo para teste)
+# app.py (versão de depuração com CORS fixo)
 import os
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException
@@ -6,17 +6,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 
-_allow = os.environ.get("ALLOW_ORIGINS", "*")
-if _allow.strip() == "*":
-    ALLOWED_ORIGINS = ["*"]
-else:
-    ALLOWED_ORIGINS = [o.strip() for o in _allow.split(",") if o.strip()]
+# --- INÍCIO DA ALTERAÇÃO PARA DEBUG ---
+# Em vez de ler da variável de ambiente, estamos definindo a origem permitida diretamente.
+# Isso garante que o valor está 100% correto para o teste.
+# Se isso resolver, o problema estava na configuração da variável de ambiente na Railway.
+ALLOWED_ORIGINS = ["https://propagandacidadeaudio.com.br"]
+# --- FIM DA ALTERAÇÃO PARA DEBUG ---
 
-app = FastAPI(title="Agente Carro de Som - Protótipo (CORS rápido)")
+# O código original para ler a variável de ambiente foi comentado abaixo.
+# _allow = os.environ.get("ALLOW_ORIGINS", "*")
+# if _allow.strip() == "*":
+#     ALLOWED_ORIGINS = ["*"]
+# else:
+#     ALLOWED_ORIGINS = [o.strip() for o in _allow.split(",") if o.strip()]
+
+app = FastAPI(title="Agente Carro de Som - Protótipo (CORS Fixo para Debug)")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=ALLOWED_ORIGINS, # Usando a lista definida acima
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -25,7 +33,7 @@ app.add_middleware(
 class SearchReq(BaseModel):
     city: str
     state: Optional[str] = None
-    radii: Optional[List[int]] = [10000,30000,50000]
+    radii: Optional[List[int]] = [10000, 30000, 50000]
 
 @app.get("/")
 async def root():
@@ -33,7 +41,7 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status":"ok"}
+    return {"status": "ok"}
 
 @app.post("/api/search_city")
 async def search_city(payload: SearchReq):
@@ -67,7 +75,7 @@ async def search_city(payload: SearchReq):
         "status": "ok",
         "city": payload.city,
         "geocoding": geocoding,
-        "note": "Protótipo: rota funcionando com CORS temporariamente permissivo."
+        "note": "Protótipo: rota funcionando com CORS fixo para depuração."
     }
 
 if __name__ == "__main__":
