@@ -1,4 +1,4 @@
-# app.py (v7.1 - Correção Final de Sintaxe)
+# app.py (v7.2 - Correção Final de Geocodificação)
 import os
 import httpx
 import json
@@ -81,17 +81,20 @@ def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
         return f"https://wa.me/55{digits_only}"
     return None
 
+# --- INÍCIO DA CORREÇÃO ---
 def geocode_address(address: str, api_key: str) -> Optional[Dict]:
     params = {"address": address, "key": api_key, "language": "pt-BR"}
     try:
         with httpx.Client() as client:
             response = client.get(f"{GOOGLE_API_BASE_URL}/geocode/json", params=params).json()
         if response['status'] == 'OK' and response.get('results'):
-            result = response['results']
+            # CORREÇÃO: Pegamos o primeiro resultado da lista
+            result = response['results'][0]
             return {"location": result['geometry']['location'], "formatted_address": result.get('formatted_address', address)}
     except Exception as e:
         logger.error(f"Erro na geocodificação: {e}")
     return None
+# --- FIM DA CORREÇÃO ---
 
 def search_nearby_places(location: Dict, radius: int, api_key: str) -> List[str]:
     logger.info(f"FASE 1 - BUSCA AMPLA: Procurando candidatos em raio de {radius}m...")
@@ -132,8 +135,8 @@ def investigate_and_process_candidates(origin_location: Dict, place_ids: List[st
         for i, place_id in enumerate(relevant_places.keys()):
             place_details = relevant_places[place_id]
             distance_info = {}
-            if (distance_response.get('status') == 'OK' and distance_response.get('rows') and distance_response['rows'].get('elements') and i < len(distance_response['rows']['elements']) and distance_response['rows']['elements'][i].get('status') == 'OK'):
-                element = distance_response['rows']['elements'][i]
+            if (distance_response.get('status') == 'OK' and distance_response.get('rows') and distance_response['rows'][0].get('elements') and i < len(distance_response['rows'][0]['elements']) and distance_response['rows'][0]['elements'][i].get('status') == 'OK'):
+                element = distance_response['rows'][0]['elements'][i]
                 distance_info = {"distance_text": element['distance']['text'], "distance_meters": element['distance']['value'], "duration_text": element['duration']['text']}
             phone = place_details.get('formatted_phone_number')
             final_results.append({"name": place_details.get('name'), "address": place_details.get('formatted_address'), "phone": phone, "whatsapp_url": format_phone_for_whatsapp(phone), "google_maps_url": place_details.get('url'), **distance_info})
@@ -163,4 +166,4 @@ def find_services_endpoint():
         return jsonify({"status": "nenhum_servico_encontrado", "message": f"Nenhum serviço relevante encontrado em um raio de {search_radius_used}km de {geo_info['formatted_address']}.", "address_searched": geo_info['formatted_address']})
     return jsonify({"status": "servicos_encontrados", "address_searched": geo_info['formatted_address'], "search_radius_km": search_radius_used, "results": final_results})
 
-# --- CORREÇÃO FINAL: Removido o bloco if __name__ == "__main__": que causava o erro ---
+# O bloco if __name__ == "__main__": foi removido para evitar erros de sintaxe
