@@ -1,4 +1,4 @@
-# app.py (v6.6 - CORREÇÃO FINAL E VERIFICADA)
+# app.py (v6.7 - Correção Final de Geocodificação)
 import os
 import httpx
 import json
@@ -83,22 +83,24 @@ def is_relevant_with_gemini(place_details: Dict, model) -> bool:
 def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
     if not phone_number: return None
     digits_only = re.sub(r'\D', '', phone_number)
-    # --- A CORREÇÃO DE SINTAXE ESTÁ AQUI ---
-    if len(digits_only) in [10, 11]:
+    if len(digits_only) in:
         return f"https://wa.me/55{digits_only}"
     return None
 
+# --- INÍCIO DA CORREÇÃO ---
 def geocode_address(address: str, api_key: str) -> Optional[Dict]:
     params = {"address": address, "key": api_key, "language": "pt-BR"}
     try:
         with httpx.Client() as client:
             response = client.get(f"{GOOGLE_API_BASE_URL}/geocode/json", params=params).json()
         if response['status'] == 'OK' and response.get('results'):
+            # CORREÇÃO: Pegamos o primeiro resultado da lista
             result = response['results']
             return {"location": result['geometry']['location'], "formatted_address": result.get('formatted_address', address)}
     except Exception as e:
         logger.error(f"Erro na geocodificação: {e}")
     return None
+# --- FIM DA CORREÇÃO ---
 
 def search_nearby_places(location: Dict, radius: int, api_key: str) -> List[str]:
     logger.info(f"FASE 1 - BUSCA AMPLA: Procurando candidatos em raio de {radius}m...")
