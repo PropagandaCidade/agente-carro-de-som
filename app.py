@@ -1,4 +1,4 @@
-# app.py (v9.6 - Transparência Total)
+# app.py (v9.7 - Correção Definitiva do KeyError + Transparência)
 import os
 import httpx
 import json
@@ -54,8 +54,13 @@ def is_relevant_with_gemini(place_details: Dict, model) -> Optional[Dict]:
     if not place_details or not model or not PROMPT_TEMPLATE: return None
     name = place_details.get('name', 'N/A')
     types = place_details.get('types', [])
+    
+    # --- INÍCIO DA CORREÇÃO DEFINITIVA DO KEYERROR ---
+    # Escapamos todas as chaves do template, e depois "desescapamos" apenas as que queremos formatar.
     safe_prompt = PROMPT_TEMPLATE.replace('{', '{{').replace('}', '}}').replace('{{name}}', '{name}').replace('{{types}}', '{types}')
     prompt = safe_prompt.format(name=name, types=types)
+    # --- FIM DA CORREÇÃO ---
+    
     response_text = 'N/A'
     try:
         logger.info(f"GEMINI: Analisando '{name}'...")
@@ -149,7 +154,7 @@ def investigate_and_process_candidates(origin_location: Dict, city_state_searche
             final_results.append({
                 "name": place_details.get('name'), "address": cleaned_address, "phone": phone,
                 "whatsapp_url": format_phone_for_whatsapp(phone), "google_maps_url": place_details.get('url'),
-                "reason": place_analysis.get('reason'), "confidence": place_analysis.get('confidence'), # --- ADICIONADO PARA TRANSPARÊNCIA ---
+                "reason": place_analysis.get('reason'), "confidence": place_analysis.get('confidence'),
                 **distance_info
             })
     final_results.sort(key=lambda x: x.get('distance_meters', float('inf')))
