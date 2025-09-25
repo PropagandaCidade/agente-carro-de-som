@@ -1,4 +1,4 @@
-# app.py (v7.1 - Configuração Centralizada via JSON - Corrigido)
+# app.py (v8.1 - Agente Resiliente com Lógica de Busca Expandida)
 import os
 import httpx
 import json
@@ -19,22 +19,16 @@ CORS(app)
 GOOGLE_API_BASE_URL = "https://maps.googleapis.com/maps/api"
 
 def load_config(filename: str) -> Dict:
-    """Carrega toda a configuração de um único arquivo JSON."""
-    default_config = {
-        "confidence_threshold": 0.5,
-        "search_keywords": ["carro de som", "publicidade"],
-        "prompt_template": "Prompt padrão de emergência: analise {name} e {types} e responda com 'sim' ou 'não'."
-    }
+    default_config = {"confidence_threshold": 0.5, "search_keywords": [], "prompt_template": ""}
     try:
         with open(filename, 'r', encoding='utf-8') as f:
             config = json.load(f)
             logger.info(f"Arquivo de configuração '{filename}' carregado com sucesso.")
             return config
     except Exception as e:
-        logger.error(f"ERRO CRÍTICO: Não foi possível carregar ou ler o arquivo '{filename}': {e}. Usando configuração padrão.")
+        logger.error(f"ERRO CRÍTICO AO LER CONFIG: '{filename}': {e}.")
         return default_config
 
-# --- MUDANÇA PRINCIPAL: Carrega todas as configurações do JSON ---
 CONFIG = load_config('config.json')
 CONFIDENCE_THRESHOLD = CONFIG.get('confidence_threshold', 0.5)
 SEARCH_KEYWORDS = CONFIG.get('search_keywords', [])
@@ -62,11 +56,8 @@ def is_relevant_with_gemini(place_details: Dict, model) -> bool:
     if not place_details or not model or not PROMPT_TEMPLATE: return False
     name = place_details.get('name', 'N/A')
     types = place_details.get('types', [])
-    
-    # Prepara o prompt, escapando as chaves internas para evitar o KeyError
     safe_prompt = PROMPT_TEMPLATE.replace('{', '{{').replace('}', '}}').replace('{{name}}', '{name}').replace('{{types}}', '{types}')
     prompt = safe_prompt.format(name=name, types=types)
-    
     try:
         logger.info(f"GEMINI: Analisando '{name}'...")
         response = model.generate_content(prompt)
@@ -158,15 +149,27 @@ def find_services_endpoint():
     if not address: return jsonify({"error": "O campo 'address' é obrigatório."}), 400
     geo_info = geocode_address(address, google_api_key)
     if not geo_info: return jsonify({"error": f"Não foi possível encontrar: '{address}'."}), 404
-    candidate_place_ids = search_nearby_places(geo_info['location'], 10000, google_api_key)
+
+    # --- INÍCIO DA NOVA LÓGICA DE BUSCA RESILIENTE ---
+    
+    # TENTATIVA 1: Raio Curto (10km)
+    logger.info("INICIANDO TENTATIVA 1: Busca e análise em raio de 10km.")
+    candidate_place_ids_short = search_nearby_places(geo_info['location'], 10000, google_api_key)
+    final_results = investigate_and_process_candidates(geo_info['location'], candidate_place_ids_short, google_api_key, gemini_model)
     search_radius_used = 10
-    if not candidate_place_ids:
-        logger.info("Expandindo busca para raio de 40km.")
-        candidate_place_ids = search_nearby_places(geo_info['location'], 40000, google_api_key)
+
+    # TENTATIVA 2: Raio Longo (40km), se a primeira tentativa não retornou resultados
+    if not final_results:
+        logger.info("TENTATIVA 2: Nenhum resultado relevante no raio curto. Expandindo busca e análise para 40km.")
+        candidate_place_ids_long = search_nearby_places(geo_info['location'], 40000, google_api_key)
+        final_results = investigate_and_process_candidates(geo_info['location'], candidate_place_ids_long, google_api_key, gemini_model)
         search_radius_used = 40
-    final_results = investigate_and_process_candidates(geo_info['location'], candidate_place_ids, google_api_key, gemini_model)
+        
+    # --- FIM DA NOVA LÓGICA ---
+
     if not final_results:
         return jsonify({"status": "nenhum_servico_encontrado", "message": f"Nenhum serviço relevante encontrado em um raio de {search_radius_used}km de {geo_info['formatted_address']}.", "address_searched": geo_info['formatted_address']})
+    
     return jsonify({"status": "servicos_encontrados", "address_searched": geo_info['formatted_address'], "search_radius_km": search_radius_used, "results": final_results})
 
 if __name__ == "__main__":
