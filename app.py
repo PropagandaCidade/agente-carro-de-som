@@ -1,4 +1,4 @@
-# app.py (v8.1 - Agente Resiliente com Lógica de Busca Expandida)
+# app.py (v9.1 - Adiciona Categoria na Resposta)
 import os
 import httpx
 import json
@@ -52,8 +52,9 @@ def configure_gemini():
         logger.error(f"DIAGNÓSTICO: CRASH AO CONFIGURAR GEMINI. Detalhes: {e}", exc_info=True)
         return None
 
-def is_relevant_with_gemini(place_details: Dict, model) -> bool:
-    if not place_details or not model or not PROMPT_TEMPLATE: return False
+def is_relevant_with_gemini(place_details: Dict, model) -> Optional[Dict]:
+    """Usa Gemini para classificar e categorizar. Retorna o JSON da análise ou None."""
+    if not place_details or not model or not PROMPT_TEMPLATE: return None
     name = place_details.get('name', 'N/A')
     types = place_details.get('types', [])
     safe_prompt = PROMPT_TEMPLATE.replace('{', '{{').replace('}', '}}').replace('{{name}}', '{name}').replace('{{types}}', '{types}')
@@ -62,14 +63,21 @@ def is_relevant_with_gemini(place_details: Dict, model) -> bool:
         logger.info(f"GEMINI: Analisando '{name}'...")
         response = model.generate_content(prompt)
         result_json = json.loads(response.text)
+        
         answer = result_json.get("answer")
         confidence = result_json.get("confidence", 0)
         reason = result_json.get("reason")
-        logger.info(f"GEMINI: Veredito para '{name}': {answer.upper()} (Confiança: {confidence:.2f}). Motivo: {reason}")
-        return answer == "sim" and confidence >= CONFIDENCE_THRESHOLD
+        category = result_json.get("category", "irrelevante")
+
+        logger.info(f"GEMINI: Veredito para '{name}': {answer.upper()} (Cat: {category}, Conf: {confidence:.2f}). Motivo: {reason}")
+        
+        if answer == "sim" and confidence >= CONFIDENCE_THRESHOLD:
+            return result_json # Retorna o objeto completo da análise
+        return None
+        
     except Exception as e:
-        logger.error(f"GEMINI: Erro inesperado ao analisar '{name}': {e}. Resposta recebida: {getattr(response, 'text', 'N/A')}")
-        return False
+        logger.error(f"GEMINI: Erro inesperado ao analisar '{name}': {e}. Resposta: {getattr(response, 'text', 'N/A')}")
+        return None
 
 def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
     if not phone_number: return None
@@ -114,26 +122,47 @@ def investigate_and_process_candidates(origin_location: Dict, place_ids: List[st
             details_response = client.get(f"{GOOGLE_API_BASE_URL}/place/details/json", params=details_params).json()
             if details_response.get('status') == 'OK':
                 place_details = details_response.get('result', {})
-                if is_relevant_with_gemini(place_details, gemini_model):
+                
+                analysis_result = is_relevant_with_gemini(place_details, gemini_model)
+                if analysis_result:
                     full_details_params = {"place_id": place_id, "fields": "name,formatted_address,formatted_phone_number,url", "key": api_key, "language": "pt-BR"}
                     full_details_response = client.get(f"{GOOGLE_API_BASE_URL}/place/details/json", params=full_details_params).json()
                     if full_details_response.get('status') == 'OK':
-                        relevant_places[place_id] = full_details_response.get('result', {})
+                        # Armazena tanto os detalhes quanto a análise do Gemini
+                        relevant_places[place_id] = {
+                            "details": full_details_response.get('result', {}),
+                            "analysis": analysis_result
+                        }
+        
         if not relevant_places:
             logger.info("Nenhum candidato passou na fase de investigação com IA.")
             return []
+            
         logger.info(f"FASE 3 - PROCESSAMENTO: {len(relevant_places)} candidatos aprovados. Calculando distâncias...")
         destination_place_ids = [f"place_id:{pid}" for pid in relevant_places.keys()]
         distance_params = {"origins": f"{origin_location['lat']},{origin_location['lng']}", "destinations": "|".join(destination_place_ids), "key": api_key, "language": "pt-BR", "units": "metric"}
         distance_response = client.get(f"{GOOGLE_API_BASE_URL}/distancematrix/json", params=distance_params).json()
+        
         for i, place_id in enumerate(relevant_places.keys()):
-            place_details = relevant_places[place_id]
+            place_data = relevant_places[place_id]
+            place_details = place_data['details']
+            place_analysis = place_data['analysis']
             distance_info = {}
             if (distance_response.get('status') == 'OK' and distance_response.get('rows') and distance_response['rows'][0].get('elements') and i < len(distance_response['rows'][0]['elements']) and distance_response['rows'][0]['elements'][i].get('status') == 'OK'):
                 element = distance_response['rows'][0]['elements'][i]
                 distance_info = {"distance_text": element['distance']['text'], "distance_meters": element['distance']['value'], "duration_text": element['duration']['text']}
+            
             phone = place_details.get('formatted_phone_number')
-            final_results.append({"name": place_details.get('name'), "address": place_details.get('formatted_address'), "phone": phone, "whatsapp_url": format_phone_for_whatsapp(phone), "google_maps_url": place_details.get('url'), **distance_info})
+            final_results.append({
+                "name": place_details.get('name'),
+                "address": place_details.get('formatted_address'),
+                "phone": phone,
+                "whatsapp_url": format_phone_for_whatsapp(phone),
+                "google_maps_url": place_details.get('url'),
+                "category": place_analysis.get('category'), # --- AQUI ESTÁ A MUDANÇA CRUCIAL ---
+                **distance_info
+            })
+            
     final_results.sort(key=lambda x: x.get('distance_meters', float('inf')))
     return final_results
 
@@ -150,28 +179,18 @@ def find_services_endpoint():
     geo_info = geocode_address(address, google_api_key)
     if not geo_info: return jsonify({"error": f"Não foi possível encontrar: '{address}'."}), 404
 
-    # --- INÍCIO DA NOVA LÓGICA DE BUSCA RESILIENTE ---
-    
-    # TENTATIVA 1: Raio Curto (10km)
     logger.info("INICIANDO TENTATIVA 1: Busca e análise em raio de 10km.")
-    candidate_place_ids_short = search_nearby_places(geo_info['location'], 10000, google_api_key)
-    final_results = investigate_and_process_candidates(geo_info['location'], candidate_place_ids_short, google_api_key, gemini_model)
+    candidate_place_ids = search_nearby_places(geo_info['location'], 10000, google_api_key)
+    final_results = investigate_and_process_candidates(geo_info['location'], candidate_place_ids, google_api_key, gemini_model)
     search_radius_used = 10
 
-    # TENTATIVA 2: Raio Longo (40km), se a primeira tentativa não retornou resultados
     if not final_results:
         logger.info("TENTATIVA 2: Nenhum resultado relevante no raio curto. Expandindo busca e análise para 40km.")
-        candidate_place_ids_long = search_nearby_places(geo_info['location'], 40000, google_api_key)
-        final_results = investigate_and_process_candidates(geo_info['location'], candidate_place_ids_long, google_api_key, gemini_model)
+        candidate_place_ids = search_nearby_places(geo_info['location'], 40000, google_api_key)
+        final_results = investigate_and_process_candidates(geo_info['location'], candidate_place_ids, google_api_key, gemini_model)
         search_radius_used = 40
         
-    # --- FIM DA NOVA LÓGICA ---
-
     if not final_results:
         return jsonify({"status": "nenhum_servico_encontrado", "message": f"Nenhum serviço relevante encontrado em um raio de {search_radius_used}km de {geo_info['formatted_address']}.", "address_searched": geo_info['formatted_address']})
     
     return jsonify({"status": "servicos_encontrados", "address_searched": geo_info['formatted_address'], "search_radius_km": search_radius_used, "results": final_results})
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    app.run(host='0.0.0.0', port=port)
