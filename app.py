@@ -1,4 +1,4 @@
-# app.py (v8.0 - Correção Definitiva de Sintaxe e Prompt)
+# app.py (v7.1 - Configuração Centralizada via JSON - Corrigido)
 import os
 import httpx
 import json
@@ -10,25 +10,31 @@ from typing import List, Dict, Optional
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
 
-CONFIDENCE_THRESHOLD = 0.50 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 CORS(app)
 
 GOOGLE_API_BASE_URL = "https://maps.googleapis.com/maps/api"
 
 def load_config(filename: str) -> Dict:
-    default_config = {"confidence_threshold": 0.5, "search_keywords": [], "prompt_template": ""}
+    """Carrega toda a configuração de um único arquivo JSON."""
+    default_config = {
+        "confidence_threshold": 0.5,
+        "search_keywords": ["carro de som", "publicidade"],
+        "prompt_template": "Prompt padrão de emergência: analise {name} e {types} e responda com 'sim' ou 'não'."
+    }
     try:
         with open(filename, 'r', encoding='utf-8') as f:
             config = json.load(f)
             logger.info(f"Arquivo de configuração '{filename}' carregado com sucesso.")
             return config
     except Exception as e:
-        logger.error(f"ERRO CRÍTICO AO LER CONFIG: '{filename}': {e}.")
+        logger.error(f"ERRO CRÍTICO: Não foi possível carregar ou ler o arquivo '{filename}': {e}. Usando configuração padrão.")
         return default_config
 
+# --- MUDANÇA PRINCIPAL: Carrega todas as configurações do JSON ---
 CONFIG = load_config('config.json')
 CONFIDENCE_THRESHOLD = CONFIG.get('confidence_threshold', 0.5)
 SEARCH_KEYWORDS = CONFIG.get('search_keywords', [])
@@ -56,7 +62,11 @@ def is_relevant_with_gemini(place_details: Dict, model) -> bool:
     if not place_details or not model or not PROMPT_TEMPLATE: return False
     name = place_details.get('name', 'N/A')
     types = place_details.get('types', [])
-    prompt = PROMPT_TEMPLATE.format(name=name, types=types)
+    
+    # Prepara o prompt, escapando as chaves internas para evitar o KeyError
+    safe_prompt = PROMPT_TEMPLATE.replace('{', '{{').replace('}', '}}').replace('{{name}}', '{name}').replace('{{types}}', '{types}')
+    prompt = safe_prompt.format(name=name, types=types)
+    
     try:
         logger.info(f"GEMINI: Analisando '{name}'...")
         response = model.generate_content(prompt)
@@ -73,7 +83,6 @@ def is_relevant_with_gemini(place_details: Dict, model) -> bool:
 def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
     if not phone_number: return None
     digits_only = re.sub(r'\D', '', phone_number)
-    # --- CORREÇÃO DE SINTAXE VERIFICADA ---
     if len(digits_only) in [10, 11]:
         return f"https://wa.me/55{digits_only}"
     return None
@@ -159,3 +168,7 @@ def find_services_endpoint():
     if not final_results:
         return jsonify({"status": "nenhum_servico_encontrado", "message": f"Nenhum serviço relevante encontrado em um raio de {search_radius_used}km de {geo_info['formatted_address']}.", "address_searched": geo_info['formatted_address']})
     return jsonify({"status": "servicos_encontrados", "address_searched": geo_info['formatted_address'], "search_radius_km": search_radius_used, "results": final_results})
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host='0.0.0.0', port=port)
