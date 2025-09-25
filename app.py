@@ -1,4 +1,4 @@
-# app.py (v9.1 - Adiciona Categoria na Resposta)
+# app.py (v9.2 - Link Otimizado para WhatsApp Web)
 import os
 import httpx
 import json
@@ -53,7 +53,6 @@ def configure_gemini():
         return None
 
 def is_relevant_with_gemini(place_details: Dict, model) -> Optional[Dict]:
-    """Usa Gemini para classificar e categorizar. Retorna o JSON da análise ou None."""
     if not place_details or not model or not PROMPT_TEMPLATE: return None
     name = place_details.get('name', 'N/A')
     types = place_details.get('types', [])
@@ -63,28 +62,32 @@ def is_relevant_with_gemini(place_details: Dict, model) -> Optional[Dict]:
         logger.info(f"GEMINI: Analisando '{name}'...")
         response = model.generate_content(prompt)
         result_json = json.loads(response.text)
-        
         answer = result_json.get("answer")
         confidence = result_json.get("confidence", 0)
         reason = result_json.get("reason")
-        category = result_json.get("category", "irrelevante")
-
-        logger.info(f"GEMINI: Veredito para '{name}': {answer.upper()} (Cat: {category}, Conf: {confidence:.2f}). Motivo: {reason}")
-        
+        logger.info(f"GEMINI: Veredito para '{name}': {answer.upper()} (Cat: {result_json.get('category', 'N/A')}, Conf: {confidence:.2f}). Motivo: {reason}")
         if answer == "sim" and confidence >= CONFIDENCE_THRESHOLD:
-            return result_json # Retorna o objeto completo da análise
+            return result_json
         return None
-        
     except Exception as e:
         logger.error(f"GEMINI: Erro inesperado ao analisar '{name}': {e}. Resposta: {getattr(response, 'text', 'N/A')}")
         return None
 
+# --- INÍCIO DA MUDANÇA ---
 def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
-    if not phone_number: return None
+    """Cria um link otimizado para abrir o WhatsApp Web."""
+    if not phone_number:
+        return None
+    
     digits_only = re.sub(r'\D', '', phone_number)
+    
+    # Garante que temos um número com DDD para o formato brasileiro
     if len(digits_only) in [10, 11]:
-        return f"https://wa.me/55{digits_only}"
+        # Constrói a URL exatamente no formato solicitado
+        return f"https://web.whatsapp.com/send/?phone=55{digits_only}&text&type=phone_number&app_absent=0"
+        
     return None
+# --- FIM DA MUDANÇA ---
 
 def geocode_address(address: str, api_key: str) -> Optional[Dict]:
     params = {"address": address, "key": api_key, "language": "pt-BR"}
@@ -122,27 +125,19 @@ def investigate_and_process_candidates(origin_location: Dict, place_ids: List[st
             details_response = client.get(f"{GOOGLE_API_BASE_URL}/place/details/json", params=details_params).json()
             if details_response.get('status') == 'OK':
                 place_details = details_response.get('result', {})
-                
                 analysis_result = is_relevant_with_gemini(place_details, gemini_model)
                 if analysis_result:
                     full_details_params = {"place_id": place_id, "fields": "name,formatted_address,formatted_phone_number,url", "key": api_key, "language": "pt-BR"}
                     full_details_response = client.get(f"{GOOGLE_API_BASE_URL}/place/details/json", params=full_details_params).json()
                     if full_details_response.get('status') == 'OK':
-                        # Armazena tanto os detalhes quanto a análise do Gemini
-                        relevant_places[place_id] = {
-                            "details": full_details_response.get('result', {}),
-                            "analysis": analysis_result
-                        }
-        
+                        relevant_places[place_id] = { "details": full_details_response.get('result', {}), "analysis": analysis_result }
         if not relevant_places:
             logger.info("Nenhum candidato passou na fase de investigação com IA.")
             return []
-            
         logger.info(f"FASE 3 - PROCESSAMENTO: {len(relevant_places)} candidatos aprovados. Calculando distâncias...")
         destination_place_ids = [f"place_id:{pid}" for pid in relevant_places.keys()]
         distance_params = {"origins": f"{origin_location['lat']},{origin_location['lng']}", "destinations": "|".join(destination_place_ids), "key": api_key, "language": "pt-BR", "units": "metric"}
         distance_response = client.get(f"{GOOGLE_API_BASE_URL}/distancematrix/json", params=distance_params).json()
-        
         for i, place_id in enumerate(relevant_places.keys()):
             place_data = relevant_places[place_id]
             place_details = place_data['details']
@@ -151,7 +146,6 @@ def investigate_and_process_candidates(origin_location: Dict, place_ids: List[st
             if (distance_response.get('status') == 'OK' and distance_response.get('rows') and distance_response['rows'][0].get('elements') and i < len(distance_response['rows'][0]['elements']) and distance_response['rows'][0]['elements'][i].get('status') == 'OK'):
                 element = distance_response['rows'][0]['elements'][i]
                 distance_info = {"distance_text": element['distance']['text'], "distance_meters": element['distance']['value'], "duration_text": element['duration']['text']}
-            
             phone = place_details.get('formatted_phone_number')
             final_results.append({
                 "name": place_details.get('name'),
@@ -159,10 +153,9 @@ def investigate_and_process_candidates(origin_location: Dict, place_ids: List[st
                 "phone": phone,
                 "whatsapp_url": format_phone_for_whatsapp(phone),
                 "google_maps_url": place_details.get('url'),
-                "category": place_analysis.get('category'), # --- AQUI ESTÁ A MUDANÇA CRUCIAL ---
+                "category": place_analysis.get('category'),
                 **distance_info
             })
-            
     final_results.sort(key=lambda x: x.get('distance_meters', float('inf')))
     return final_results
 
