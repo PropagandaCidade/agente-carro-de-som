@@ -1,4 +1,4 @@
-# app.py (v7.2 - Correção Final de Geocodificação)
+# app.py (v8.0 - Correção Definitiva de Sintaxe e Prompt)
 import os
 import httpx
 import json
@@ -10,27 +10,23 @@ from typing import List, Dict, Optional
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
 
+CONFIDENCE_THRESHOLD = 0.50 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 app = Flask(__name__)
 CORS(app)
 
 GOOGLE_API_BASE_URL = "https://maps.googleapis.com/maps/api"
 
 def load_config(filename: str) -> Dict:
-    default_config = {
-        "confidence_threshold": 0.5,
-        "search_keywords": ["carro de som", "publicidade"],
-        "prompt_template": "Prompt padrão de emergência: analise {name} e {types} e responda com 'sim' ou 'não'."
-    }
+    default_config = {"confidence_threshold": 0.5, "search_keywords": [], "prompt_template": ""}
     try:
         with open(filename, 'r', encoding='utf-8') as f:
             config = json.load(f)
             logger.info(f"Arquivo de configuração '{filename}' carregado com sucesso.")
             return config
     except Exception as e:
-        logger.error(f"ERRO CRÍTICO: Não foi possível carregar ou ler o arquivo '{filename}': {e}. Usando configuração padrão.")
+        logger.error(f"ERRO CRÍTICO AO LER CONFIG: '{filename}': {e}.")
         return default_config
 
 CONFIG = load_config('config.json')
@@ -77,24 +73,22 @@ def is_relevant_with_gemini(place_details: Dict, model) -> bool:
 def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
     if not phone_number: return None
     digits_only = re.sub(r'\D', '', phone_number)
+    # --- CORREÇÃO DE SINTAXE VERIFICADA ---
     if len(digits_only) in [10, 11]:
         return f"https://wa.me/55{digits_only}"
     return None
 
-# --- INÍCIO DA CORREÇÃO ---
 def geocode_address(address: str, api_key: str) -> Optional[Dict]:
     params = {"address": address, "key": api_key, "language": "pt-BR"}
     try:
         with httpx.Client() as client:
             response = client.get(f"{GOOGLE_API_BASE_URL}/geocode/json", params=params).json()
         if response['status'] == 'OK' and response.get('results'):
-            # CORREÇÃO: Pegamos o primeiro resultado da lista
             result = response['results'][0]
             return {"location": result['geometry']['location'], "formatted_address": result.get('formatted_address', address)}
     except Exception as e:
         logger.error(f"Erro na geocodificação: {e}")
     return None
-# --- FIM DA CORREÇÃO ---
 
 def search_nearby_places(location: Dict, radius: int, api_key: str) -> List[str]:
     logger.info(f"FASE 1 - BUSCA AMPLA: Procurando candidatos em raio de {radius}m...")
@@ -165,5 +159,3 @@ def find_services_endpoint():
     if not final_results:
         return jsonify({"status": "nenhum_servico_encontrado", "message": f"Nenhum serviço relevante encontrado em um raio de {search_radius_used}km de {geo_info['formatted_address']}.", "address_searched": geo_info['formatted_address']})
     return jsonify({"status": "servicos_encontrados", "address_searched": geo_info['formatted_address'], "search_radius_km": search_radius_used, "results": final_results})
-
-# O bloco if __name__ == "__main__": foi removido para evitar erros de sintaxe
