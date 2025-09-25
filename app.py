@@ -1,4 +1,4 @@
-# app.py (v9.3 - Limpeza de Endereço)
+# app.py (v9.4 - Correção Final da Chamada de Função)
 import os
 import httpx
 import json
@@ -106,19 +106,16 @@ def search_nearby_places(location: Dict, radius: int, api_key: str) -> List[str]
     logger.info(f"Busca Ampla encontrou {len(place_ids)} candidatos únicos.")
     return list(place_ids)
 
-# --- INÍCIO DA NOVA FUNÇÃO DE LIMPEZA ---
-def clean_address(full_address: str, city_state: str) -> str:
-    """Remove a cidade, estado e país do endereço completo para evitar redundância."""
+def clean_address(full_address: Optional[str], city_state: str) -> str:
     if not full_address:
         return ""
-    # Remove a parte da cidade e estado
-    cleaned = full_address.replace(city_state, '')
+    # Remove a parte da cidade e estado (insensível a maiúsculas/minúsculas)
+    cleaned = re.sub(re.escape(city_state), '', full_address, flags=re.IGNORECASE)
     # Remove a parte do país
     cleaned = cleaned.replace(', Brasil', '')
-    # Remove vírgulas duplas ou no início/fim
-    cleaned = re.sub(r', ,', ',', cleaned).strip().strip(',')
-    return cleaned.strip()
-# --- FIM DA NOVA FUNÇÃO DE LIMPEZA ---
+    # Remove vírgulas duplas ou no início/fim e espaços extras
+    cleaned = re.sub(r', ,', ',', cleaned).strip().strip(',').strip()
+    return cleaned
 
 def investigate_and_process_candidates(origin_location: Dict, city_state_searched: str, place_ids: List[str], api_key: str, gemini_model) -> List[Dict]:
     if not place_ids: return []
@@ -153,13 +150,12 @@ def investigate_and_process_candidates(origin_location: Dict, city_state_searche
                 distance_info = {"distance_text": element['distance']['text'], "distance_meters": element['distance']['value'], "duration_text": element['duration']['text']}
             phone = place_details.get('formatted_phone_number')
             
-            # --- APLICA A LIMPEZA DO ENDEREÇO AQUI ---
             full_address = place_details.get('formatted_address')
             cleaned_address = clean_address(full_address, city_state_searched)
             
             final_results.append({
                 "name": place_details.get('name'),
-                "address": cleaned_address, # Usa o endereço limpo
+                "address": cleaned_address,
                 "phone": phone,
                 "whatsapp_url": format_phone_for_whatsapp(phone),
                 "google_maps_url": place_details.get('url'),
@@ -178,27 +174,29 @@ def find_services_endpoint():
     if not google_api_key:
         return jsonify({"error": "Chave da API do Google Maps não configurada."}), 500
     
-    # O frontend envia o 'address' completo (Ex: "Goiânia - GO")
-    address_from_user = request.get_json().get('address')
-    if not address_from_user: return jsonify({"error": "O campo 'address' é obrigatório."}), 400
+    payload = request.get_json()
+    address_for_search = payload.get('address')
+    city_state_original = payload.get('city_state_original')
+    if not address_for_search or not city_state_original:
+        return jsonify({"error": "Dados de endereço insuficientes na requisição."}), 400
     
-    geo_info = geocode_address(address_from_user, google_api_key)
-    if not geo_info: return jsonify({"error": f"Não foi possível encontrar: '{address_from_user}'."}), 404
+    geo_info = geocode_address(address_for_search, google_api_key)
+    if not geo_info: return jsonify({"error": f"Não foi possível encontrar: '{address_for_search}'."}), 404
 
-    # Precisamos da cidade/estado que o usuário digitou para a limpeza do endereço
-    # A API do Google pode retornar um nome formatado diferente, então usamos o original
-    city_state_original = request.get_json().get('city_state_original')
-
+    # --- INÍCIO DA CORREÇÃO ---
     logger.info("INICIANDO TENTATIVA 1: Busca e análise em raio de 10km.")
     candidate_place_ids = search_nearby_places(geo_info['location'], 10000, google_api_key)
+    # Passando o 'city_state_original' para a função
     final_results = investigate_and_process_candidates(geo_info['location'], city_state_original, candidate_place_ids, google_api_key, gemini_model)
     search_radius_used = 10
 
     if not final_results:
         logger.info("TENTATIVA 2: Expandindo busca e análise para 40km.")
         candidate_place_ids = search_nearby_places(geo_info['location'], 40000, google_api_key)
+        # Passando o 'city_state_original' também na segunda tentativa
         final_results = investigate_and_process_candidates(geo_info['location'], city_state_original, candidate_place_ids, google_api_key, gemini_model)
         search_radius_used = 40
+    # --- FIM DA CORREÇÃO ---
         
     if not final_results:
         return jsonify({"status": "nenhum_servico_encontrado", "message": f"Nenhum serviço relevante encontrado em um raio de {search_radius_used}km de {geo_info['formatted_address']}.", "address_searched": geo_info['formatted_address']})
