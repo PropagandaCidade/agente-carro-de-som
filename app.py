@@ -1,4 +1,4 @@
-# app.py (v9.9 - Correção Final de Todos os Erros)
+# app.py (v9.3 - Limpeza de Endereço)
 import os
 import httpx
 import json
@@ -12,8 +12,10 @@ from google.api_core import exceptions as google_exceptions
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 CORS(app)
+
 GOOGLE_API_BASE_URL = "https://maps.googleapis.com/maps/api"
 
 def load_config(filename: str) -> Dict:
@@ -56,19 +58,19 @@ def is_relevant_with_gemini(place_details: Dict, model) -> Optional[Dict]:
     types = place_details.get('types', [])
     safe_prompt = PROMPT_TEMPLATE.replace('{', '{{').replace('}', '}}').replace('{{name}}', '{name}').replace('{{types}}', '{types}')
     prompt = safe_prompt.format(name=name, types=types)
-    response_text = 'N/A'
     try:
         logger.info(f"GEMINI: Analisando '{name}'...")
         response = model.generate_content(prompt)
-        response_text = response.text
-        result_json = json.loads(response_text)
+        result_json = json.loads(response.text)
         answer = result_json.get("answer")
         confidence = result_json.get("confidence", 0)
+        reason = result_json.get("reason")
+        logger.info(f"GEMINI: Veredito para '{name}': {answer.upper()} (Cat: {result_json.get('category', 'N/A')}, Conf: {confidence:.2f}). Motivo: {reason}")
         if answer == "sim" and confidence >= CONFIDENCE_THRESHOLD:
             return result_json
         return None
     except Exception as e:
-        logger.error(f"GEMINI: Erro inesperado ao analisar '{name}': {e}. Resposta: {response_text}")
+        logger.error(f"GEMINI: Erro inesperado ao analisar '{name}': {e}. Resposta: {getattr(response, 'text', 'N/A')}")
         return None
 
 def format_phone_for_whatsapp(phone_number: str) -> Optional[str]:
@@ -104,12 +106,19 @@ def search_nearby_places(location: Dict, radius: int, api_key: str) -> List[str]
     logger.info(f"Busca Ampla encontrou {len(place_ids)} candidatos únicos.")
     return list(place_ids)
 
-def clean_address(full_address: Optional[str], city_state: str) -> str:
-    if not full_address: return ""
-    cleaned = re.sub(re.escape(city_state), '', full_address, flags=re.IGNORECASE)
+# --- INÍCIO DA NOVA FUNÇÃO DE LIMPEZA ---
+def clean_address(full_address: str, city_state: str) -> str:
+    """Remove a cidade, estado e país do endereço completo para evitar redundância."""
+    if not full_address:
+        return ""
+    # Remove a parte da cidade e estado
+    cleaned = full_address.replace(city_state, '')
+    # Remove a parte do país
     cleaned = cleaned.replace(', Brasil', '')
-    cleaned = re.sub(r', ,', ',', cleaned).strip().strip(',').strip()
-    return cleaned
+    # Remove vírgulas duplas ou no início/fim
+    cleaned = re.sub(r', ,', ',', cleaned).strip().strip(',')
+    return cleaned.strip()
+# --- FIM DA NOVA FUNÇÃO DE LIMPEZA ---
 
 def investigate_and_process_candidates(origin_location: Dict, city_state_searched: str, place_ids: List[str], api_key: str, gemini_model) -> List[Dict]:
     if not place_ids: return []
@@ -143,11 +152,18 @@ def investigate_and_process_candidates(origin_location: Dict, city_state_searche
                 element = distance_response['rows'][0]['elements'][i]
                 distance_info = {"distance_text": element['distance']['text'], "distance_meters": element['distance']['value'], "duration_text": element['duration']['text']}
             phone = place_details.get('formatted_phone_number')
-            cleaned_address = clean_address(place_details.get('formatted_address'), city_state_searched)
+            
+            # --- APLICA A LIMPEZA DO ENDEREÇO AQUI ---
+            full_address = place_details.get('formatted_address')
+            cleaned_address = clean_address(full_address, city_state_searched)
+            
             final_results.append({
-                "name": place_details.get('name'), "address": cleaned_address, "phone": phone,
-                "whatsapp_url": format_phone_for_whatsapp(phone), "google_maps_url": place_details.get('url'),
-                "reason": place_analysis.get('reason'), "confidence": place_analysis.get('confidence'),
+                "name": place_details.get('name'),
+                "address": cleaned_address, # Usa o endereço limpo
+                "phone": phone,
+                "whatsapp_url": format_phone_for_whatsapp(phone),
+                "google_maps_url": place_details.get('url'),
+                "category": place_analysis.get('category'),
                 **distance_info
             })
     final_results.sort(key=lambda x: x.get('distance_meters', float('inf')))
@@ -156,26 +172,34 @@ def investigate_and_process_candidates(origin_location: Dict, city_state_searche
 @app.route('/api/find-services', methods=['POST'])
 def find_services_endpoint():
     gemini_model = configure_gemini()
-    if not gemini_model: return jsonify({"error": "Falha crítica na inicialização do serviço de IA."}), 500
+    if not gemini_model:
+        return jsonify({"error": "Falha crítica na inicialização do serviço de IA."}), 500
     google_api_key = get_google_api_key()
-    if not google_api_key: return jsonify({"error": "Chave da API do Google Maps não configurada."}), 500
-    payload = request.get_json()
-    address_for_search = payload.get('address')
-    city_state_original = payload.get('city_state_original')
-    if not address_for_search or not city_state_original:
-        return jsonify({"error": "Dados de endereço insuficientes na requisição."}), 400
-    geo_info = geocode_address(address_for_search, google_api_key)
-    if not geo_info: return jsonify({"error": f"Não foi possível encontrar: '{address_for_search}'."}), 404
+    if not google_api_key:
+        return jsonify({"error": "Chave da API do Google Maps não configurada."}), 500
+    
+    # O frontend envia o 'address' completo (Ex: "Goiânia - GO")
+    address_from_user = request.get_json().get('address')
+    if not address_from_user: return jsonify({"error": "O campo 'address' é obrigatório."}), 400
+    
+    geo_info = geocode_address(address_from_user, google_api_key)
+    if not geo_info: return jsonify({"error": f"Não foi possível encontrar: '{address_from_user}'."}), 404
+
+    # Precisamos da cidade/estado que o usuário digitou para a limpeza do endereço
+    # A API do Google pode retornar um nome formatado diferente, então usamos o original
+    city_state_original = request.get_json().get('city_state_original')
 
     logger.info("INICIANDO TENTATIVA 1: Busca e análise em raio de 10km.")
     candidate_place_ids = search_nearby_places(geo_info['location'], 10000, google_api_key)
     final_results = investigate_and_process_candidates(geo_info['location'], city_state_original, candidate_place_ids, google_api_key, gemini_model)
     search_radius_used = 10
+
     if not final_results:
         logger.info("TENTATIVA 2: Expandindo busca e análise para 40km.")
         candidate_place_ids = search_nearby_places(geo_info['location'], 40000, google_api_key)
         final_results = investigate_and_process_candidates(geo_info['location'], city_state_original, candidate_place_ids, google_api_key, gemini_model)
         search_radius_used = 40
+        
     if not final_results:
         return jsonify({"status": "nenhum_servico_encontrado", "message": f"Nenhum serviço relevante encontrado em um raio de {search_radius_used}km de {geo_info['formatted_address']}.", "address_searched": geo_info['formatted_address']})
     
