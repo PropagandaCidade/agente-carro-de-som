@@ -1,7 +1,7 @@
 {
   "confidence_threshold": 0.65,
-  "processing_timeout_seconds": 55,  // Reduzido para 55 segundos
-  "max_ia_candidates_to_process": 15, // NOVO: Limita a IA a processar os 15 primeiros candidatos
+  "processing_timeout_seconds": 55,  
+  "max_ia_candidates_to_process": 15, 
   "search_keywords": [
     "carro de som",
     "propaganda volante",
