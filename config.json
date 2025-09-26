@@ -1,6 +1,6 @@
 {
   "confidence_threshold": 0.65,
-  "processing_timeout_seconds": 350,  // Aumentado para dar mais folga antes do Gunicorn (360s)
+  "processing_timeout_seconds": 350,
   "search_keywords": [
     "carro de som",
     "propaganda volante",
