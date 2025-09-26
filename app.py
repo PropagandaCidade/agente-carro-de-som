@@ -1,4 +1,4 @@
-# app.py (v9.9 - Refinamento de Timeout e Mensagens de Retorno)
+# app.py (v9.10 - Otimização para 60 segundos)
 import os
 import httpx
 import json
@@ -22,7 +22,8 @@ GOOGLE_API_BASE_URL = "https://maps.googleapis.com/maps/api"
 def load_config(filename: str) -> Dict:
     default_config = {
         "confidence_threshold": 0.5, 
-        "processing_timeout_seconds": 350, # Default para o novo timeout
+        "processing_timeout_seconds": 60, # Default para 60s se não encontrar
+        "max_ia_candidates_to_process": 15, # Default para 15 candidatos
         "search_keywords": [], 
         "prompt_template": ""
     }
@@ -37,7 +38,8 @@ def load_config(filename: str) -> Dict:
 
 CONFIG = load_config('config.json')
 CONFIDENCE_THRESHOLD = CONFIG.get('confidence_threshold', 0.65) 
-PROCESSING_TIMEOUT_SECONDS = CONFIG.get('processing_timeout_seconds', 350) # Carregar o novo timeout
+PROCESSING_TIMEOUT_SECONDS = CONFIG.get('processing_timeout_seconds', 60) # Carregar o novo timeout
+MAX_IA_CANDIDATES_TO_PROCESS = CONFIG.get('max_ia_candidates_to_process', 15) # Carregar o novo limite
 SEARCH_KEYWORDS = CONFIG.get('search_keywords', [])
 PROMPT_TEMPLATE = CONFIG.get('prompt_template', "")
 
@@ -127,28 +129,31 @@ def clean_address(full_address: str, city_state: str) -> str:
     cleaned = re.sub(r', ,', ',', cleaned).strip().strip(',')
     return cleaned.strip()
 
-def investigate_and_process_candidates(origin_location: Dict, city_state_searched: str, place_ids: List[str], api_key: str, gemini_model) -> (List[Dict], bool): # Retorna também um booleano para indicar timeout
+def investigate_and_process_candidates(origin_location: Dict, city_state_searched: str, place_ids: List[str], api_key: str, gemini_model, global_start_time: float) -> (List[Dict], bool):
     if not place_ids: return [], False
-    logger.info(f"FASE 2 - INVESTIGAÇÃO COM IA: Analisando {len(place_ids)} candidatos...")
+    logger.info(f"FASE 2 - INVESTIGAÇÃO COM IA: Analisando {min(len(place_ids), MAX_IA_CANDIDATES_TO_PROCESS)} dos {len(place_ids)} candidatos elegíveis...")
     final_results, relevant_places = {}, {}
     
-    start_time = time.time() 
-    timeout_occurred = False # Flag para o timeout
+    timeout_occurred = False 
+    processed_count = 0 # Contador para o limite de candidatos da IA
 
     with httpx.Client(timeout=30.0) as client:
-        for place_id in place_ids:
-            if time.time() - start_time > PROCESSING_TIMEOUT_SECONDS:
+        # Limita o número de place_ids para análise da IA
+        for place_id in place_ids[:MAX_IA_CANDIDATES_TO_PROCESS]:
+            if time.time() - global_start_time > PROCESSING_TIMEOUT_SECONDS:
                 logger.warning(f"Timeout de {PROCESSING_TIMEOUT_SECONDS}s atingido durante a investigação com IA. Retornando resultados parciais.")
                 timeout_occurred = True
                 break 
             
             details_params = {"place_id": place_id, "fields": "name,url,types", "key": api_key, "language": "pt-BR"}
             details_response = client.get(f"{GOOGLE_API_BASE_URL}/place/details/json", params=details_params).json()
+            
             if details_response.get('status') == 'OK':
                 place_details = details_response.get('result', {})
                 analysis_result = is_relevant_with_gemini(place_details, gemini_model)
                 if analysis_result:
-                    if time.time() - start_time > PROCESSING_TIMEOUT_SECONDS:
+                    # Verifica o timeout novamente antes de fazer a próxima chamada
+                    if time.time() - global_start_time > PROCESSING_TIMEOUT_SECONDS:
                         logger.warning(f"Timeout de {PROCESSING_TIMEOUT_SECONDS}s atingido antes de obter detalhes completos. Retornando resultados parciais.")
                         timeout_occurred = True
                         break
@@ -157,14 +162,20 @@ def investigate_and_process_candidates(origin_location: Dict, city_state_searche
                     full_details_response = client.get(f"{GOOGLE_API_BASE_URL}/place/details/json", params=full_details_params).json()
                     if full_details_response.get('status') == 'OK':
                         relevant_places[place_id] = {"details": full_details_response.get('result', {}), "analysis": analysis_result}
-        
+            
+            processed_count += 1
+            if processed_count >= MAX_IA_CANDIDATES_TO_PROCESS:
+                logger.info(f"Limite de {MAX_IA_CANDIDATES_TO_PROCESS} candidatos para análise da IA atingido.")
+                break # Sai do loop se o limite foi atingido
+
         if not relevant_places:
             logger.info("Nenhum candidato passou na fase de investigação com IA.")
             return [], timeout_occurred
         
         logger.info(f"FASE 3 - PROCESSAMENTO: {len(relevant_places)} candidatos aprovados...")
         
-        if time.time() - start_time > PROCESSING_TIMEOUT_SECONDS:
+        # Verifica o timeout antes de iniciar o cálculo de distância
+        if time.time() - global_start_time > PROCESSING_TIMEOUT_SECONDS:
             logger.warning(f"Timeout de {PROCESSING_TIMEOUT_SECONDS}s atingido antes de calcular distâncias. Retornando resultados parciais sem distância.")
             timeout_occurred = True
             
@@ -193,7 +204,7 @@ def investigate_and_process_candidates(origin_location: Dict, city_state_searche
         relevant_places_list = list(relevant_places.items())
 
         for i, (place_id, place_data) in enumerate(relevant_places_list):
-            if time.time() - start_time > PROCESSING_TIMEOUT_SECONDS:
+            if time.time() - global_start_time > PROCESSING_TIMEOUT_SECONDS:
                 logger.warning(f"Timeout de {PROCESSING_TIMEOUT_SECONDS}s atingido durante o processamento de resultados. Retornando resultados parciais.")
                 timeout_occurred = True
                 break 
@@ -218,15 +229,15 @@ def investigate_and_process_candidates(origin_location: Dict, city_state_searche
                 "category": place_analysis.get('category'),
                 **distance_info
             }
-    
-    sorted_final_results = sorted(final_results.values(), key=lambda x: x.get('distance_meters', float('inf')))
-    return sorted_final_results, timeout_occurred
+        
+        sorted_final_results = sorted(final_results.values(), key=lambda x: x.get('distance_meters', float('inf')))
+        return sorted_final_results, timeout_occurred
 
 
 @app.route('/api/find-services', methods=['POST'])
 def find_services_endpoint():
-    request_start_time = time.time() # Timer para a requisição inteira
-    logger.info(f"API: Requisição recebida. Tempo de início: {request_start_time}")
+    request_start_time = time.time() 
+    logger.info(f"API: Requisição recebida. Tempo de início: {request_start_time:.2f}") # Formata o tempo para melhor leitura
 
     gemini_model = configure_gemini()
     if not gemini_model:
@@ -251,15 +262,16 @@ def find_services_endpoint():
     timeout_triggered = False
     search_radius_used = 0
 
+    # TENTATIVA 1: Raio de 10km
     logger.info("API: INICIANDO TENTATIVA 1: Busca e análise em raio de 10km.")
     candidate_place_ids = search_nearby_places(geo_info['location'], 10000, google_api_key)
     
-    # Passa o tempo restante para a função de investigação
     time_elapsed = time.time() - request_start_time
-    remaining_time_for_investigation = PROCESSING_TIMEOUT_SECONDS - time_elapsed
+    # Reduz o tempo restante para a investigação para deixar um buffer antes do timeout total
+    remaining_time_for_investigation = PROCESSING_TIMEOUT_SECONDS - time_elapsed - 5 
     
     if remaining_time_for_investigation > 0:
-        current_results, current_timeout_triggered = investigate_and_process_candidates(geo_info['location'], city_state_original, candidate_place_ids, google_api_key, gemini_model)
+        current_results, current_timeout_triggered = investigate_and_process_candidates(geo_info['location'], city_state_original, candidate_place_ids, google_api_key, gemini_model, request_start_time)
         final_results.extend(current_results)
         timeout_triggered = current_timeout_triggered
         search_radius_used = 10
@@ -268,15 +280,15 @@ def find_services_endpoint():
         timeout_triggered = True
 
 
-    if not final_results and not timeout_triggered: # Tenta a segunda varredura apenas se não achou nada e não deu timeout na primeira
+    if not final_results and not timeout_triggered: 
         logger.info("API: TENTATIVA 2: Expandindo busca e análise para 40km.")
         candidate_place_ids = search_nearby_places(geo_info['location'], 40000, google_api_key)
         
         time_elapsed = time.time() - request_start_time
-        remaining_time_for_investigation = PROCESSING_TIMEOUT_SECONDS - time_elapsed
-
+        remaining_time_for_investigation = PROCESSING_TIMEOUT_SECONDS - time_elapsed - 5 # Mantém o buffer
+        
         if remaining_time_for_investigation > 0:
-            current_results, current_timeout_triggered = investigate_and_process_candidates(geo_info['location'], city_state_original, candidate_place_ids, google_api_key, gemini_model)
+            current_results, current_timeout_triggered = investigate_and_process_candidates(geo_info['location'], city_state_original, candidate_place_ids, google_api_key, gemini_model, request_start_time)
             final_results.extend(current_results)
             timeout_triggered = current_timeout_triggered
             search_radius_used = 40
