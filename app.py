@@ -1,4 +1,4 @@
-# app.py (v9.7 - Modelo Gemini 2.5 Flash e NOVA ÊNFASE na API Key)
+# app.py (v9.8 - Adicionado timeout interno para processamento)
 import os
 import httpx
 import json
@@ -6,6 +6,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import logging
 import re
+import time # Importar para usar o timer
 from typing import List, Dict, Optional
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
@@ -19,7 +20,12 @@ CORS(app)
 GOOGLE_API_BASE_URL = "https://maps.googleapis.com/maps/api"
 
 def load_config(filename: str) -> Dict:
-    default_config = {"confidence_threshold": 0.5, "search_keywords": [], "prompt_template": ""}
+    default_config = {
+        "confidence_threshold": 0.5, 
+        "processing_timeout_seconds": 320, # Default para o novo timeout
+        "search_keywords": [], 
+        "prompt_template": ""
+    }
     try:
         with open(filename, 'r', encoding='utf-8') as f:
             config = json.load(f)
@@ -30,7 +36,8 @@ def load_config(filename: str) -> Dict:
         return default_config
 
 CONFIG = load_config('config.json')
-CONFIDENCE_THRESHOLD = CONFIG.get('confidence_threshold', 0.65) # Mantido o seu valor de config.json
+CONFIDENCE_THRESHOLD = CONFIG.get('confidence_threshold', 0.65) 
+PROCESSING_TIMEOUT_SECONDS = CONFIG.get('processing_timeout_seconds', 320) # Carregar o novo timeout
 SEARCH_KEYWORDS = CONFIG.get('search_keywords', [])
 PROMPT_TEMPLATE = CONFIG.get('prompt_template', "")
 
@@ -46,7 +53,6 @@ def configure_gemini():
             logger.error("DIAGNÓSTICO: Variável GEMINI_API_KEY está VAZIA.")
             return None
         genai.configure(api_key=api_key)
-        # --- MUDANÇA AQUI: Usando 'gemini-2.5-flash' ---
         model = genai.GenerativeModel('gemini-2.5-flash', generation_config={"response_mime_type": "application/json"})
         return model
     except Exception as e:
@@ -60,7 +66,7 @@ def is_relevant_with_gemini(place_details: Dict, model) -> Optional[Dict]:
     safe_prompt = PROMPT_TEMPLATE.replace('{', '{{').replace('}', '}}').replace('{{name}}', '{name}').replace('{{types}}', '{types}')
     prompt = safe_prompt.format(name=name, types=types)
     
-    response = None # Inicializa response para evitar UnboundLocalError
+    response = None 
     try:
         logger.info(f"GEMINI: Analisando '{name}'...")
         response = model.generate_content(prompt)
@@ -125,22 +131,60 @@ def investigate_and_process_candidates(origin_location: Dict, city_state_searche
     if not place_ids: return []
     logger.info(f"FASE 2 - INVESTIGAÇÃO COM IA: Analisando {len(place_ids)} candidatos...")
     final_results, relevant_places = {}, {}
+    
+    start_time = time.time() # Inicia o timer
+
     with httpx.Client(timeout=30.0) as client:
         for place_id in place_ids:
+            if time.time() - start_time > PROCESSING_TIMEOUT_SECONDS:
+                logger.warning(f"Timeout de {PROCESSING_TIMEOUT_SECONDS}s atingido durante a investigação com IA. Retornando resultados parciais.")
+                break # Sai do loop de investigação
+            
             details_params = {"place_id": place_id, "fields": "name,url,types", "key": api_key, "language": "pt-BR"}
             details_response = client.get(f"{GOOGLE_API_BASE_URL}/place/details/json", params=details_params).json()
             if details_response.get('status') == 'OK':
                 place_details = details_response.get('result', {})
                 analysis_result = is_relevant_with_gemini(place_details, gemini_model)
                 if analysis_result:
+                    # Verifica o timeout novamente antes de fazer a próxima chamada
+                    if time.time() - start_time > PROCESSING_TIMEOUT_SECONDS:
+                        logger.warning(f"Timeout de {PROCESSING_TIMEOUT_SECONDS}s atingido antes de obter detalhes completos. Retornando resultados parciais.")
+                        break
+                    
                     full_details_params = {"place_id": place_id, "fields": "name,formatted_address,formatted_phone_number,url", "key": api_key, "language": "pt-BR"}
                     full_details_response = client.get(f"{GOOGLE_API_BASE_URL}/place/details/json", params=full_details_params).json()
                     if full_details_response.get('status') == 'OK':
                         relevant_places[place_id] = {"details": full_details_response.get('result', {}), "analysis": analysis_result}
+        
         if not relevant_places:
             logger.info("Nenhum candidato passou na fase de investigação com IA.")
             return []
+        
         logger.info(f"FASE 3 - PROCESSAMENTO: {len(relevant_places)} candidatos aprovados...")
+        
+        # Verifica o timeout antes de iniciar o cálculo de distância
+        if time.time() - start_time > PROCESSING_TIMEOUT_SECONDS:
+            logger.warning(f"Timeout de {PROCESSING_TIMEOUT_SECONDS}s atingido antes de calcular distâncias. Retornando resultados parciais sem distância.")
+            # Se o timeout já foi atingido, processa sem cálculo de distância
+            final_results = {}
+            for place_id, place_data in relevant_places.items():
+                place_details = place_data['details']
+                place_analysis = place_data['analysis']
+                phone = place_details.get('formatted_phone_number')
+                full_address = place_details.get('formatted_address')
+                cleaned_address = clean_address(full_address, city_state_searched)
+                final_results[place_id] = {
+                    "name": place_details.get('name'),
+                    "address": cleaned_address,
+                    "phone": phone,
+                    "whatsapp_url": format_phone_for_whatsapp(phone),
+                    "google_maps_url": place_details.get('url'),
+                    "category": place_analysis.get('category'),
+                    # Sem distance_info
+                }
+            return list(final_results.values())
+
+
         destination_place_ids = [f"place_id:{pid}" for pid in relevant_places.keys()]
         distance_params = {"origins": f"{origin_location['lat']},{origin_location['lng']}", "destinations": "|".join(destination_place_ids), "key": api_key, "language": "pt-BR", "units": "metric"}
         distance_response = client.get(f"{GOOGLE_API_BASE_URL}/distancematrix/json", params=distance_params).json()
@@ -148,12 +192,16 @@ def investigate_and_process_candidates(origin_location: Dict, city_state_searche
         relevant_places_list = list(relevant_places.items())
 
         for i, (place_id, place_data) in enumerate(relevant_places_list):
+            if time.time() - start_time > PROCESSING_TIMEOUT_SECONDS:
+                logger.warning(f"Timeout de {PROCESSING_TIMEOUT_SECONDS}s atingido durante o processamento de resultados. Retornando resultados parciais.")
+                break # Sai do loop de processamento
+            
             place_details = place_data['details']
             place_analysis = place_data['analysis']
             distance_info = {}
             if (distance_response.get('status') == 'OK' and distance_response.get('rows') and distance_response['rows'][0].get('elements') and i < len(distance_response['rows'][0]['elements']) and distance_response['rows'][0]['elements'][i].get('status') == 'OK'):
                 element = distance_response['rows'][0]['elements'][i]
-                distance_info = {"distance_text": element['distance']['text'], "distance_meters": element['distance']['value'], "duration_text": element['duration']['text']}
+                distance_info = {"distance_text": element['distance']['text'], "distance_meters": element['distance']['value'], "duration_text": element['duration']['value']} # Corrigido aqui, duration_text deve pegar 'value'
             phone = place_details.get('formatted_phone_number')
             
             full_address = place_details.get('formatted_address')
