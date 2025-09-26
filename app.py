@@ -1,4 +1,4 @@
-# app.py (v9.4 - Correção Gemini Model ID)
+# app.py (v9.5 - Tentativa com Gemini 1.0 Pro)
 import os
 import httpx
 import json
@@ -30,7 +30,7 @@ def load_config(filename: str) -> Dict:
         return default_config
 
 CONFIG = load_config('config.json')
-CONFIDENCE_THRESHOLD = CONFIG.get('confidence_threshold', 0.5)
+CONFIDENCE_THRESHOLD = CONFIG.get('confidence_threshold', 0.65) # Mantido o seu valor de config.json
 SEARCH_KEYWORDS = CONFIG.get('search_keywords', [])
 PROMPT_TEMPLATE = CONFIG.get('prompt_template', "")
 
@@ -46,8 +46,8 @@ def configure_gemini():
             logger.error("DIAGNÓSTICO: Variável GEMINI_API_KEY está VAZIA.")
             return None
         genai.configure(api_key=api_key)
-        # --- MUDANÇA AQUI: Usando 'gemini-1.5-flash' genérico ---
-        model = genai.GenerativeModel('gemini-1.5-flash', generation_config={"response_mime_type": "application/json"})
+        # --- MUDANÇA AQUI: Usando 'gemini-1.0-pro' ---
+        model = genai.GenerativeModel('gemini-1.0-pro', generation_config={"response_mime_type": "application/json"})
         return model
     except Exception as e:
         logger.error(f"DIAGNÓSTICO: CRASH AO CONFIGURAR GEMINI. Detalhes: {e}", exc_info=True)
@@ -109,7 +109,6 @@ def search_nearby_places(location: Dict, radius: int, api_key: str) -> List[str]
     logger.info(f"Busca Ampla encontrou {len(place_ids)} candidatos únicos.")
     return list(place_ids)
 
-# --- INÍCIO DA NOVA FUNÇÃO DE LIMPEZA ---
 def clean_address(full_address: str, city_state: str) -> str:
     """Remove a cidade, estado e país do endereço completo para evitar redundância."""
     if not full_address:
@@ -121,7 +120,6 @@ def clean_address(full_address: str, city_state: str) -> str:
     # Remove vírgulas duplas ou no início/fim
     cleaned = re.sub(r', ,', ',', cleaned).strip().strip(',')
     return cleaned.strip()
-# --- FIM DA NOVA FUNÇÃO DE LIMPEZA ---
 
 def investigate_and_process_candidates(origin_location: Dict, city_state_searched: str, place_ids: List[str], api_key: str, gemini_model) -> List[Dict]:
     if not place_ids: return []
@@ -147,7 +145,6 @@ def investigate_and_process_candidates(origin_location: Dict, city_state_searche
         distance_params = {"origins": f"{origin_location['lat']},{origin_location['lng']}", "destinations": "|".join(destination_place_ids), "key": api_key, "language": "pt-BR", "units": "metric"}
         distance_response = client.get(f"{GOOGLE_API_BASE_URL}/distancematrix/json", params=distance_params).json()
         
-        # Converte relevant_places para uma lista para manter a ordem e processar com distance_response
         relevant_places_list = list(relevant_places.items())
 
         for i, (place_id, place_data) in enumerate(relevant_places_list):
@@ -159,13 +156,12 @@ def investigate_and_process_candidates(origin_location: Dict, city_state_searche
                 distance_info = {"distance_text": element['distance']['text'], "distance_meters": element['distance']['value'], "duration_text": element['duration']['text']}
             phone = place_details.get('formatted_phone_number')
             
-            # --- APLICA A LIMPEZA DO ENDEREÇO AQUI ---
             full_address = place_details.get('formatted_address')
             cleaned_address = clean_address(full_address, city_state_searched)
             
-            final_results[place_id] = { # Mantenha como dicionário temporariamente
+            final_results[place_id] = {
                 "name": place_details.get('name'),
-                "address": cleaned_address, # Usa o endereço limpo
+                "address": cleaned_address,
                 "phone": phone,
                 "whatsapp_url": format_phone_for_whatsapp(phone),
                 "google_maps_url": place_details.get('url'),
@@ -173,7 +169,6 @@ def investigate_and_process_candidates(origin_location: Dict, city_state_searche
                 **distance_info
             }
     
-    # Converta para lista de valores e ordene no final
     sorted_final_results = sorted(final_results.values(), key=lambda x: x.get('distance_meters', float('inf')))
     return sorted_final_results
 
@@ -187,10 +182,8 @@ def find_services_endpoint():
     if not google_api_key:
         return jsonify({"error": "Chave da API do Google Maps não configurada."}), 500
     
-    # O frontend envia o 'address' completo (Ex: "Goiânia - GO")
     data = request.get_json()
     address_from_user = data.get('address')
-    # O frontend agora envia 'city_state_original'
     city_state_original = data.get('city_state_original') 
 
     if not address_from_user: return jsonify({"error": "O campo 'address' é obrigatório."}), 400
