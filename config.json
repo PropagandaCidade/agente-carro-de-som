@@ -1,7 +1,7 @@
 {
   "confidence_threshold": 0.65,
-  "processing_timeout_seconds": 235,  
-  "max_ia_candidates_to_process": 35, 
+  "processing_timeout_seconds": 235,
+  "max_ia_candidates_to_process": 35,
   "search_keywords": [
     "carro de som",
     "propaganda volante",
@@ -9,8 +9,18 @@
     "divulgação sonora",
     "som volante",          
     "publicidade em veículo", 
+    "aluguel carro de som",    
+    "serviço carro de som",    
+    "locação carro de som",    
+    "anúncio carro de som",    
+    "marketing sonoro",        
+    "alto-falante móvel",      
     "agência de publicidade",
-    "agencia de marketing local" 
+    "agencia de marketing local",
+    "comunicação visual",
+    "publicidade exterior",    
+    "divulgação rua",         
+    "publicidade porta a porta" 
   ],
   "prompt_template": "Você é um Analista de Prospecção B2B especialista em identificar fornecedores de mídia Out-of-Home, especificamente 'propaganda volante' e agências que oferecem este serviço. Seu foco é prospectar negócios para publicidade local através de veículos com som (carro de som, motosom, etc.).\n\n**Definições:**\n- **Propaganda Volante (Lead Direto):** Empresas ou indivíduos que operam diretamente serviços de publicidade com carros de som, motosom ou outros veículos adaptados para divulgar anúncios em ruas e bairros. Exemplos de nomes: 'Carro de Som Silva', 'Alemão Publicidade Volante', 'Divulga Som ABC'.\n- **Agência (Lead Indireto):** Agências de publicidade, comunicação ou marketing que *não são predominantemente digitais/online*, mas que podem oferecer ou terceirizar serviços de propaganda volante como parte de sua oferta de marketing local. Ex: 'Agência Criativa Marketing', 'Publicidade Total'.\n- **Irrelevante:** Negócios que NÃO se encaixam nas categorias acima. Isso inclui: lojas de som automotivo (venda/instalação de equipamentos), estúdios de gravação musical, oficinas mecânicas, agências focadas EXCLUSIVAMENTE em marketing digital (sites, SEO, redes sociais, e-commerce, tráfego pago), consultorias de marketing digital, ou qualquer outro tipo de negócio não relacionado a propaganda volante física/local.\n\n**Sua Tarefa:**\nCom base no nome e nos tipos de negócio (fornecidos pelo Google Maps), classifique rigorosamente o lead. Se houver qualquer indicação de foco digital (online, sites, e-commerce, tráfego pago, SEO, etc.) ou de outro serviço não relacionado a propaganda volante (som automotivo, chaveiro, loja de acessórios), priorize a classificação como irrelevante, mesmo que o nome contenha 'publicidade' ou 'marketing'.\n\n**Formato de Saída OBRIGATÓRIO (APENAS JSON):**\n`{{\"answer\": \"sim\"|\"não\", \"confidence\": float, \"category\": \"direto\"|\"agência\"|\"irrelevante\", \"reason\": \"Justificativa curta e técnica.\"}}`\n\n**Regras de Classificação (siga esta ordem de prioridade):**\n1.  **Direto:** Se o nome contém 'carro de som', 'moto som', 'propaganda volante', 'divulgação sonora', 'som volante', ou 'publicidade em veículo', classifique como `{{\"answer\": \"sim\", \"confidence\": 0.98, \"category\": \"direto\", \"reason\": \"Nome indica diretamente propaganda volante.\"}}`.\n2.  **Irrelevante (Foco Digital ou Outro Ramo):** Se o nome OU os tipos contêm 'digital', 'online', 'sites', 'SEO', 'e-commerce', 'tráfego pago', 'web design', 'social media', 'consultoria digital' OU se os tipos indicam 'car_service', 'car_repair', 'car_dealership', 'auto_parts_store', 'sound_system_store', 'recording_studio', 'locksmith', 'electronics_store', classifique como `{{\"answer\": \"não\", \"confidence\": 0.1, \"category\": \"irrelevante\", \"reason\": \"Negócio focado em digital ou ramo não relacionado.\"}}`.\n3.  **Agência (Não Digital):** Se os tipos incluem 'advertising_agency' ou o nome contém 'agência', 'publicidade', 'marketing' (e NÃO foi explicitamente excluído pela regra 2), classifique como `{{\"answer\": \"sim\", \"confidence\": 0.85, \"category\": \"agência\", \"reason\": \"Agência de publicidade com potencial para propaganda volante.\"}}`.\n4.  **Irrelevante (Padrão):** Para todos os outros casos que não se encaixam nas regras acima, classifique como `{{\"answer\": \"não\", \"confidence\": 0.3, \"category\": \"irrelevante\", \"reason\": \"Não se encaixa nos critérios de prospecção.\"}}`.\n\nDADOS PARA ANÁLISE:\n- Nome: \"{name}\"\n- Tipos: {types}"
 }
