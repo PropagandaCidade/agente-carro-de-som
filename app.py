@@ -1,4 +1,4 @@
-# app.py (v9.3 - Limpeza de Endereço)
+# app.py (v9.4 - Correção Gemini Model ID)
 import os
 import httpx
 import json
@@ -46,7 +46,8 @@ def configure_gemini():
             logger.error("DIAGNÓSTICO: Variável GEMINI_API_KEY está VAZIA.")
             return None
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash-latest', generation_config={"response_mime_type": "application/json"})
+        # --- MUDANÇA AQUI: Usando 'gemini-1.5-flash' genérico ---
+        model = genai.GenerativeModel('gemini-1.5-flash', generation_config={"response_mime_type": "application/json"})
         return model
     except Exception as e:
         logger.error(f"DIAGNÓSTICO: CRASH AO CONFIGURAR GEMINI. Detalhes: {e}", exc_info=True)
@@ -58,6 +59,8 @@ def is_relevant_with_gemini(place_details: Dict, model) -> Optional[Dict]:
     types = place_details.get('types', [])
     safe_prompt = PROMPT_TEMPLATE.replace('{', '{{').replace('}', '}}').replace('{{name}}', '{name}').replace('{{types}}', '{types}')
     prompt = safe_prompt.format(name=name, types=types)
+    
+    response = None # Inicializa response para evitar UnboundLocalError
     try:
         logger.info(f"GEMINI: Analisando '{name}'...")
         response = model.generate_content(prompt)
@@ -123,7 +126,7 @@ def clean_address(full_address: str, city_state: str) -> str:
 def investigate_and_process_candidates(origin_location: Dict, city_state_searched: str, place_ids: List[str], api_key: str, gemini_model) -> List[Dict]:
     if not place_ids: return []
     logger.info(f"FASE 2 - INVESTIGAÇÃO COM IA: Analisando {len(place_ids)} candidatos...")
-    final_results, relevant_places = [], {}
+    final_results, relevant_places = {}, {}
     with httpx.Client(timeout=30.0) as client:
         for place_id in place_ids:
             details_params = {"place_id": place_id, "fields": "name,url,types", "key": api_key, "language": "pt-BR"}
@@ -143,8 +146,11 @@ def investigate_and_process_candidates(origin_location: Dict, city_state_searche
         destination_place_ids = [f"place_id:{pid}" for pid in relevant_places.keys()]
         distance_params = {"origins": f"{origin_location['lat']},{origin_location['lng']}", "destinations": "|".join(destination_place_ids), "key": api_key, "language": "pt-BR", "units": "metric"}
         distance_response = client.get(f"{GOOGLE_API_BASE_URL}/distancematrix/json", params=distance_params).json()
-        for i, place_id in enumerate(relevant_places.keys()):
-            place_data = relevant_places[place_id]
+        
+        # Converte relevant_places para uma lista para manter a ordem e processar com distance_response
+        relevant_places_list = list(relevant_places.items())
+
+        for i, (place_id, place_data) in enumerate(relevant_places_list):
             place_details = place_data['details']
             place_analysis = place_data['analysis']
             distance_info = {}
@@ -157,7 +163,7 @@ def investigate_and_process_candidates(origin_location: Dict, city_state_searche
             full_address = place_details.get('formatted_address')
             cleaned_address = clean_address(full_address, city_state_searched)
             
-            final_results.append({
+            final_results[place_id] = { # Mantenha como dicionário temporariamente
                 "name": place_details.get('name'),
                 "address": cleaned_address, # Usa o endereço limpo
                 "phone": phone,
@@ -165,9 +171,12 @@ def investigate_and_process_candidates(origin_location: Dict, city_state_searche
                 "google_maps_url": place_details.get('url'),
                 "category": place_analysis.get('category'),
                 **distance_info
-            })
-    final_results.sort(key=lambda x: x.get('distance_meters', float('inf')))
-    return final_results
+            }
+    
+    # Converta para lista de valores e ordene no final
+    sorted_final_results = sorted(final_results.values(), key=lambda x: x.get('distance_meters', float('inf')))
+    return sorted_final_results
+
 
 @app.route('/api/find-services', methods=['POST'])
 def find_services_endpoint():
@@ -179,15 +188,16 @@ def find_services_endpoint():
         return jsonify({"error": "Chave da API do Google Maps não configurada."}), 500
     
     # O frontend envia o 'address' completo (Ex: "Goiânia - GO")
-    address_from_user = request.get_json().get('address')
+    data = request.get_json()
+    address_from_user = data.get('address')
+    # O frontend agora envia 'city_state_original'
+    city_state_original = data.get('city_state_original') 
+
     if not address_from_user: return jsonify({"error": "O campo 'address' é obrigatório."}), 400
+    if not city_state_original: return jsonify({"error": "O campo 'city_state_original' é obrigatório para limpeza de endereço."}), 400
     
     geo_info = geocode_address(address_from_user, google_api_key)
     if not geo_info: return jsonify({"error": f"Não foi possível encontrar: '{address_from_user}'."}), 404
-
-    # Precisamos da cidade/estado que o usuário digitou para a limpeza do endereço
-    # A API do Google pode retornar um nome formatado diferente, então usamos o original
-    city_state_original = request.get_json().get('city_state_original')
 
     logger.info("INICIANDO TENTATIVA 1: Busca e análise em raio de 10km.")
     candidate_place_ids = search_nearby_places(geo_info['location'], 10000, google_api_key)
