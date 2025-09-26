@@ -1,5 +1,6 @@
 {
   "confidence_threshold": 0.65,
+  "processing_timeout_seconds": 320,
   "search_keywords": [
     "carro de som",
     "propaganda volante",
