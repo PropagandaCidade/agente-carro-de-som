@@ -1,4 +1,4 @@
-# app.py (v9.11 - Timeout de 240s e mais candidatos)
+# app.py (v9.12 - Busca inicial ampliada para 20km)
 import os
 import httpx
 import json
@@ -22,8 +22,8 @@ GOOGLE_API_BASE_URL = "https://maps.googleapis.com/maps/api"
 def load_config(filename: str) -> Dict:
     default_config = {
         "confidence_threshold": 0.5, 
-        "processing_timeout_seconds": 235, # Default para 235s
-        "max_ia_candidates_to_process": 35, # Default para 35 candidatos
+        "processing_timeout_seconds": 235, 
+        "max_ia_candidates_to_process": 35,
         "search_keywords": [], 
         "prompt_template": ""
     }
@@ -38,8 +38,8 @@ def load_config(filename: str) -> Dict:
 
 CONFIG = load_config('config.json')
 CONFIDENCE_THRESHOLD = CONFIG.get('confidence_threshold', 0.65) 
-PROCESSING_TIMEOUT_SECONDS = CONFIG.get('processing_timeout_seconds', 235) # Carregar o novo timeout
-MAX_IA_CANDIDATES_TO_PROCESS = CONFIG.get('max_ia_candidates_to_process', 35) # Carregar o novo limite
+PROCESSING_TIMEOUT_SECONDS = CONFIG.get('processing_timeout_seconds', 235) 
+MAX_IA_CANDIDATES_TO_PROCESS = CONFIG.get('max_ia_candidates_to_process', 35) 
 SEARCH_KEYWORDS = CONFIG.get('search_keywords', [])
 PROMPT_TEMPLATE = CONFIG.get('prompt_template', "")
 
@@ -259,25 +259,26 @@ def find_services_endpoint():
     timeout_triggered = False
     search_radius_used = 0
 
-    # TENTATIVA 1: Raio de 10km
-    logger.info("API: INICIANDO TENTATIVA 1: Busca e análise em raio de 10km.")
-    candidate_place_ids = search_nearby_places(geo_info['location'], 10000, google_api_key)
+    # TENTATIVA 1: Raio de 20km (NOVO)
+    logger.info("API: INICIANDO TENTATIVA 1: Busca e análise em raio de 20km.")
+    # --- MUDANÇA AQUI: de 10000 para 20000 ---
+    candidate_place_ids = search_nearby_places(geo_info['location'], 20000, google_api_key) 
     
     time_elapsed = time.time() - request_start_time
-    # Usamos o tempo restante para a investigação, deixando um buffer de 5s para o Gunicorn
     remaining_time_for_investigation = PROCESSING_TIMEOUT_SECONDS - time_elapsed - 5 
     
     if remaining_time_for_investigation > 0:
         current_results, current_timeout_triggered = investigate_and_process_candidates(geo_info['location'], city_state_original, candidate_place_ids, google_api_key, gemini_model, request_start_time)
         final_results.extend(current_results)
         timeout_triggered = current_timeout_triggered
-        search_radius_used = 10
+        search_radius_used = 20 # --- MUDANÇA AQUI: de 10 para 20 ---
     else:
         logger.warning(f"API: Tempo esgotado ({PROCESSING_TIMEOUT_SECONDS}s) antes de iniciar a primeira investigação. Nenhum resultado.")
         timeout_triggered = True
 
 
     if not final_results and not timeout_triggered: 
+        # TENTATIVA 2: Expandindo busca e análise para 40km (esta permanece a mesma)
         logger.info("API: TENTATIVA 2: Expandindo busca e análise para 40km.")
         candidate_place_ids = search_nearby_places(geo_info['location'], 40000, google_api_key)
         
