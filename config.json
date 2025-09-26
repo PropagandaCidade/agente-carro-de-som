@@ -1,0 +1,26 @@
+{
+  "confidence_threshold": 0.65,
+  "processing_timeout_seconds": 235,
+  "max_ia_candidates_to_process": 35,
+  "search_keywords": [
+    "carro de som",
+    "propaganda volante",
+    "publicidade volante",
+    "divulgação sonora",
+    "som volante",          
+    "publicidade em veículo", 
+    "aluguel carro de som",    
+    "serviço carro de som",    
+    "locação carro de som",    
+    "anúncio carro de som",    
+    "marketing sonoro",        
+    "alto-falante móvel",      
+    "agência de publicidade",
+    "agencia de marketing local",
+    "comunicação visual",
+    "publicidade exterior",    
+    "divulgação rua",         
+    "publicidade porta a porta" 
+  ],
+  "prompt_template": "Você é um Analista de Prospecção B2B especialista em identificar fornecedores de mídia Out-of-Home. Seu objetivo principal é prospectar empresas que realizam **propaganda volante (carro de som, motosom, trio elétrico, mini-trio)** para divulgação sonora em ruas, bairros e regiões. Você também deve identificar agências de publicidade e marketing que NÃO são predominantemente digitais, mas que podem oferecer ou terceirizar este tipo de serviço físico/local.\n\n**Definições Cruciais para Classificação:**\n- **Propaganda Volante (Lead Direto):** Empresas ou indivíduos cujo core business é a publicidade sonora veicular. Exemplos de nomes que indicam diretamente: 'Carro de Som Silva', 'Alemão Publicidade Volante', 'Divulga Som ABC', 'Som Móvel Publicidade'.\n- **Agência (Lead Indireto):** Agências de publicidade, comunicação ou marketing que focam em estratégias amplas ou locais, e **NÃO** possuem o termo 'digital', 'online', 'web', 'sites', 'tráfego pago' em seu nome ou descrição principal. Elas podem ser fornecedoras de propaganda volante. Ex: 'Agência Criativa Marketing', 'Publicidade Total', 'Comunicação Essencial'.\n- **Irrelevante:** Negócios que NÃO se encaixam nas categorias acima. **QUALQUER MENÇÃO a 'DIGITAL', 'ONLINE', 'WEB', 'SITES', 'TRÁFEGO PAGO', 'SEO', 'SOCIAL MEDIA', 'E-COMMERCE' no nome ou nos tipos de negócio do Google Maps DEVE RESULTAR EM CLASSIFICAÇÃO COMO IRRELEVANTE, INDEPENDENTEMENTE DE OUTRAS PALAVRAS COMO 'AGÊNCIA' OU 'MARKETING'.** Outros irrelevantes incluem: lojas de som automotivo (venda/instalação), estúdios de gravação, oficinas, gráficas que não mencionam publicidade, etc.\n\n**Sua Tarefa (Prioridade na Exclusão de Digital):**\nCom base no nome e nos tipos de negócio, classifique rigorosamente o lead. A detecção de foco digital ou em outro ramo não relacionado à propaganda volante física **TEM PRIORIDADE MÁXIMA** e deve sobrepor qualquer outra palavra-chave que pudesse indicar relevância.\n\n**Formato de Saída OBRIGATÓRIO (APENAS JSON):**\n`{{\"answer\": \"sim\"|\"não\", \"confidence\": float, \"category\": \"direto\"|\"agência\"|\"irrelevante\", \"reason\": \"Justificativa curta e técnica.\"}}`\n\n**Regras de Classificação (siga esta ordem de prioridade estrita):**\n1.  **Direto (Alta Confiança):** Se o nome contém 'carro de som', 'moto som', 'propaganda volante', 'divulgação sonora', 'som volante', 'publicidade em veículo', 'aluguel carro de som', 'serviço carro de som', 'locação carro de som', 'anúncio carro de som', 'marketing sonoro', 'alto-falante móvel', classifique como `{{\"answer\": \"sim\", \"confidence\": 0.98, \"category\": \"direto\", \"reason\": \"Nome indica diretamente propaganda volante.\"}}`.\n2.  **Irrelevante (Foco Digital ou Outro Ramo - PRIORIDADE MÁXIMA):** Se o nome OU os tipos contêm qualquer um dos seguintes termos: 'digital', 'online', 'sites', 'SEO', 'e-commerce', 'tráfego pago', 'web design', 'social media', 'consultoria digital', 'internet', 'virtual', 'aplicativos', 'desenvolvimento web' OU se os tipos indicam 'car_service', 'car_repair', 'car_dealership', 'auto_parts_store', 'sound_system_store', 'recording_studio', 'locksmith', 'electronics_store', 'gráfica' (a menos que explicitamente combinado com 'publicidade'), 'adesivos', 'envelopamento', classifique como `{{\"answer\": \"não\", \"confidence\": 0.1, \"category\": \"irrelevante\", \"reason\": \"Negócio focado em digital, web ou ramo não relacionado à publicidade volante física.\"}}`.\n3.  **Agência (Não Digital - Média Confiança):** Se os tipos incluem 'advertising_agency' ou o nome contém 'agência', 'publicidade', 'marketing', 'comunicação' (e a Regra 2 NÃO foi acionada), classifique como `{{\"answer\": \"sim\", \"confidence\": 0.85, \"category\": \"agência\", \"reason\": \"Agência de publicidade/comunicação com potencial para propaganda volante (sem foco digital explícito).\"}}`.\n4.  **Irrelevante (Padrão - Baixa Confiança):** Para todos os outros casos que não se encaixam nas regras acima, classifique como `{{\"answer\": \"não\", \"confidence\": 0.3, \"category\": \"irrelevante\", \"reason\": \"Não se encaixa nos critérios de prospecção.\"}}`.\n\nDADOS PARA ANÁLISE:\n- Nome: \"{name}\"\n- Tipos: {types}"
+}
