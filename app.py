@@ -1,4 +1,4 @@
-# app.py (v9.8 - Retorno à Simplicidade + Correção Final)
+# app.py (v9.9 - Correção Final de Todos os Erros)
 import os
 import httpx
 import json
@@ -64,7 +64,6 @@ def is_relevant_with_gemini(place_details: Dict, model) -> Optional[Dict]:
         result_json = json.loads(response_text)
         answer = result_json.get("answer")
         confidence = result_json.get("confidence", 0)
-        logger.info(f"GEMINI: Veredito para '{name}': {answer.upper()} (Conf: {confidence:.2f}).")
         if answer == "sim" and confidence >= CONFIDENCE_THRESHOLD:
             return result_json
         return None
@@ -105,16 +104,12 @@ def search_nearby_places(location: Dict, radius: int, api_key: str) -> List[str]
     logger.info(f"Busca Ampla encontrou {len(place_ids)} candidatos únicos.")
     return list(place_ids)
 
-# --- INÍCIO DA CORREÇÃO ---
 def clean_address(full_address: Optional[str], city_state: str) -> str:
-    # Esta função agora é segura e lida com endereços nulos
-    if not full_address:
-        return ""
+    if not full_address: return ""
     cleaned = re.sub(re.escape(city_state), '', full_address, flags=re.IGNORECASE)
     cleaned = cleaned.replace(', Brasil', '')
     cleaned = re.sub(r', ,', ',', cleaned).strip().strip(',').strip()
     return cleaned
-# --- FIM DA CORREÇÃO ---
 
 def investigate_and_process_candidates(origin_location: Dict, city_state_searched: str, place_ids: List[str], api_key: str, gemini_model) -> List[Dict]:
     if not place_ids: return []
@@ -183,5 +178,5 @@ def find_services_endpoint():
         search_radius_used = 40
     if not final_results:
         return jsonify({"status": "nenhum_servico_encontrado", "message": f"Nenhum serviço relevante encontrado em um raio de {search_radius_used}km de {geo_info['formatted_address']}.", "address_searched": geo_info['formatted_address']})
-    return jsonify({"status": "servicos_encontrados", "address_searched": geo_info['formatted_address'], "search_radius_km": search_radius_used, "results": final_results})```
-
+    
+    return jsonify({"status": "servicos_encontrados", "address_searched": geo_info['formatted_address'], "search_radius_km": search_radius_used, "results": final_results})
