@@ -1,4 +1,4 @@
-# app.py (v9.5 - Tentativa com Gemini 1.0 Pro)
+# app.py (v9.6 - Modelo Gemini 1.5 Flash e ênfase na API Key)
 import os
 import httpx
 import json
@@ -46,8 +46,8 @@ def configure_gemini():
             logger.error("DIAGNÓSTICO: Variável GEMINI_API_KEY está VAZIA.")
             return None
         genai.configure(api_key=api_key)
-        # --- MUDANÇA AQUI: Usando 'gemini-1.0-pro' ---
-        model = genai.GenerativeModel('gemini-1.0-pro', generation_config={"response_mime_type": "application/json"})
+        # --- MUDANÇA AQUI: Usando 'gemini-1.5-flash' ---
+        model = genai.GenerativeModel('gemini-1.5-flash', generation_config={"response_mime_type": "application/json"})
         return model
     except Exception as e:
         logger.error(f"DIAGNÓSTICO: CRASH AO CONFIGURAR GEMINI. Detalhes: {e}", exc_info=True)
